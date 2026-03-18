@@ -78,7 +78,13 @@ export async function initInkAuth(options: AuthRunnerOptions = {}): Promise<Auth
       }),
   });
 
-  const resolvedController = await controllerPromise;
+  // Race against waitUntilExit so a pre-mount crash (ErrorBoundary) doesn't deadlock.
+  const resolvedController = await Promise.race([
+    controllerPromise,
+    renderResult.waitUntilExit().then(() => {
+      throw new Error('Ink UI exited before controller was delivered');
+    }),
+  ]);
 
   return {
     renderResult,

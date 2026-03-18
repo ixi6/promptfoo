@@ -99,8 +99,14 @@ export async function initInkRedteamGenerate(
     },
   );
 
-  // Wait for the component to mount and deliver its controller
-  const resolvedController = await controllerPromise;
+  // Wait for the component to mount and deliver its controller.
+  // Race against waitUntilExit so a pre-mount crash (ErrorBoundary) doesn't deadlock.
+  const resolvedController = await Promise.race([
+    controllerPromise,
+    renderResult.waitUntilExit().then(() => {
+      throw new Error('Ink UI exited before controller was delivered');
+    }),
+  ]);
 
   return {
     renderResult,

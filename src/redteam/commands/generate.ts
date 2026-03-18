@@ -537,7 +537,10 @@ export async function doGenerateRedteam(
   let inkController: RedteamGenerateController | null = null;
 
   // Helper function to create an onProgress callback from the Ink controller
-  function createProgressCallback(controller: RedteamGenerateController) {
+  function createProgressCallback(
+    controller: RedteamGenerateController,
+    options?: { suppressComplete?: boolean },
+  ) {
     let pluginsStarted = false;
     return (event: SynthesizeProgressEvent) => {
       switch (event.type) {
@@ -578,7 +581,10 @@ export async function doGenerateRedteam(
           });
           break;
         case 'complete':
-          controller.complete(event.totalTests);
+          // In multi-context mode, suppress per-context complete — caller reports aggregate
+          if (!options?.suppressComplete) {
+            controller.complete(event.totalTests);
+          }
           break;
         case 'error':
           controller.error(event.message);
@@ -599,10 +605,12 @@ export async function doGenerateRedteam(
     }
   }
 
-  const onProgress = inkController ? createProgressCallback(inkController) : undefined;
-
   // Check for contexts - if present, generate tests for each context
   const contexts = redteamConfig?.contexts;
+  const isMultiContext = contexts && contexts.length > 0;
+  const onProgress = inkController
+    ? createProgressCallback(inkController, { suppressComplete: isMultiContext })
+    : undefined;
   let redteamTests: any[] = [];
   let purpose: string = enhancedPurpose;
   let entities: string[] = [];
@@ -674,6 +682,10 @@ export async function doGenerateRedteam(
 
       // Use first context's purpose for backward compatibility in output
       purpose = contexts[0].purpose;
+      // Report aggregate total to Ink UI (per-context complete events were suppressed)
+      if (inkController) {
+        inkController.complete(redteamTests.length);
+      }
       logger.info(
         `Generated ${redteamTests.length} total test cases across ${contexts.length} contexts`,
       );

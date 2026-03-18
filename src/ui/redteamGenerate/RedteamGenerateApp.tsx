@@ -139,7 +139,7 @@ function ElapsedTime({ startTime, endTime }: { startTime: number; endTime?: numb
 }
 
 export function RedteamGenerateApp({
-  onComplete: _onComplete,
+  onComplete,
   onCancel,
   onController,
 }: RedteamGenerateAppProps) {
@@ -159,7 +159,11 @@ export function RedteamGenerateApp({
       onCancel?.();
       exit();
     }
-    if (input === 'q' && progress.phase === 'complete') {
+    if (
+      (input === 'q' || key.return || key.escape) &&
+      (progress.phase === 'complete' || progress.phase === 'error')
+    ) {
+      onComplete?.({ testsGenerated: progress.generatedTests });
       exit();
     }
   });
@@ -289,8 +293,15 @@ export function RedteamGenerateApp({
             ✓ Generated {progress.generatedTests} test cases
           </Text>
           <Box marginTop={1}>
-            <Text dimColor>Press q to exit</Text>
+            <Text dimColor>Press Enter to continue</Text>
           </Box>
+        </Box>
+      )}
+
+      {/* Error dismissal */}
+      {progress.phase === 'error' && (
+        <Box marginTop={1}>
+          <Text dimColor>Press Enter to continue</Text>
         </Box>
       )}
 
