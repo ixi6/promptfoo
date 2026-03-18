@@ -46,6 +46,12 @@ export const vendorCodeSplittingGroups = [
 ] as const;
 
 const browserModuleImportFilter = /(?:^|[\\/])(?:logger|createHash)(?:\.ts)?$/;
+
+// Extract React Compiler Babel plugins from @vitejs/plugin-react's preset.
+// The type assertion mirrors the shape returned by reactCompilerPreset() —
+// if a future version of plugin-react changes this, the optional chaining
+// below will keep the build working (compiler just won't run) and the
+// warning will surface the issue.
 const reactCompilerConfig = reactCompilerPreset() as {
   preset: () => { plugins: TransformOptions['plugins'] };
   rolldown?: { filter?: { code?: RegExp } };
@@ -53,6 +59,13 @@ const reactCompilerConfig = reactCompilerPreset() as {
 const reactCompilerPlugins = reactCompilerConfig.preset().plugins;
 const reactCompilerCodeFilter = reactCompilerConfig.rolldown?.filter?.code;
 const reactCompilerFileFilter = /\.[jt]sx?$/;
+
+if (!reactCompilerPlugins?.length) {
+  console.warn(
+    '[react-compiler] Failed to extract Babel plugins from @vitejs/plugin-react. ' +
+      'The React Compiler will be disabled for this build.',
+  );
+}
 
 export function browserModulesPlugin(): Plugin {
   return {
@@ -102,6 +115,10 @@ export function reactCompilerPlugin(): Plugin {
     name: 'react-compiler',
     enforce: 'pre',
     async transform(code, id) {
+      if (!reactCompilerPlugins?.length) {
+        return null;
+      }
+
       const cleanId = id.split('?')[0];
 
       if (
