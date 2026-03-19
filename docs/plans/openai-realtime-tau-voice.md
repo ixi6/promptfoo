@@ -18,8 +18,8 @@ Build a local, eval-focused voice simulation harness in promptfoo that is inspir
 ### Phase 1: Foundation
 
 - [x] Refactor simulated-user provider plumbing so local providers can generate user turns.
+- [x] Align the OpenAI realtime provider with current audio input/output handling.
 - [ ] Define a reusable voice trajectory metadata shape for multi-turn evals.
-- [ ] Align the OpenAI realtime provider with current audio input/output handling.
 
 ### Phase 2: Harness
 
@@ -57,3 +57,5 @@ Build a local, eval-focused voice simulation harness in promptfoo that is inspir
 - Updated `promptfoo:simulated-user` to support a nested local `userProvider` while preserving the remote hosted default.
 - Added registry support for resolving nested providers in simulated-user configs.
 - Added and passed targeted tests for local simulated-user execution.
+- Updated `src/providers/openai/realtime.ts` to accept `audio_input` envelopes, normalize current realtime output audio/transcript events, support persistent conversation IDs, and capture richer metadata for transcripts, audio, tools, and event counts.
+- Added and passed targeted realtime provider tests for audio input envelopes, output alias normalization, persistent function callbacks, and existing connection behavior.

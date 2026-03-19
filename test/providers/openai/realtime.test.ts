@@ -636,6 +636,324 @@ describe('OpenAI Realtime Provider', () => {
       expect(response.metadata!.audio!.data).toBe(response.audio!.data); // Should match the audio data
     });
 
+    it('should send audio input envelopes for realtime audio prompts', async () => {
+      const provider = new OpenAiRealtimeProvider('gpt-realtime', {
+        config: { modalities: ['text', 'audio'] },
+      });
+      const audioPrompt = JSON.stringify({
+        type: 'audio_input',
+        audio: {
+          data: Buffer.from('fake-user-audio').toString('base64'),
+          format: 'pcm16',
+        },
+        transcript: 'Hello from audio',
+      });
+
+      const responsePromise = provider.directWebSocketRequest(audioPrompt);
+
+      for (const handler of mockHandlers.open) {
+        await handler();
+      }
+
+      const sentEvents = mockWs.send.mock.calls.map(([payload]: [string]) => JSON.parse(payload));
+      expect(sentEvents.map((event: { type: string }) => event.type)).toEqual([
+        'session.update',
+        'input_audio_buffer.append',
+        'input_audio_buffer.commit',
+      ]);
+      expect(sentEvents[1].audio).toBe(Buffer.from('fake-user-audio').toString('base64'));
+
+      const messageHandlers = mockHandlers.message;
+      const lastHandler = messageHandlers[messageHandlers.length - 1];
+
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'conversation.item.created',
+            item: { id: 'msg_audio_1', role: 'user' },
+          }),
+        ),
+      );
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'response.created',
+            response: { id: 'resp_audio_1' },
+          }),
+        ),
+      );
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'response.output_audio_transcript.delta',
+            delta: 'Hello from audio',
+          }),
+        ),
+      );
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'response.done',
+            response: {
+              usage: {
+                total_tokens: 8,
+                input_tokens: 4,
+                output_tokens: 4,
+              },
+            },
+          }),
+        ),
+      );
+
+      const response = await responsePromise;
+      expect(response.output).toBe('Hello from audio');
+      expect(response.metadata?.inputTranscript).toBe('Hello from audio');
+      expect(response.metadata?.eventCounts?.['response.output_audio_transcript.delta']).toBe(1);
+    });
+
+    it('should normalize output audio alias events in direct websocket mode', async () => {
+      const provider = new OpenAiRealtimeProvider('gpt-realtime', {
+        config: { modalities: ['text', 'audio'] },
+      });
+
+      const responsePromise = provider.directWebSocketRequest('Hello');
+
+      for (const handler of mockHandlers.open) {
+        await handler();
+      }
+
+      const messageHandlers = mockHandlers.message;
+      const lastHandler = messageHandlers[messageHandlers.length - 1];
+      const audioData = Buffer.from('alias-audio');
+
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'conversation.item.created',
+            item: { id: 'msg_alias_1', role: 'user' },
+          }),
+        ),
+      );
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'response.created',
+            response: { id: 'resp_alias_1' },
+          }),
+        ),
+      );
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'response.output_audio.delta',
+            item_id: 'audio_alias_1',
+            delta: audioData.toString('base64'),
+          }),
+        ),
+      );
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'response.output_audio.done',
+            item_id: 'audio_alias_1',
+            format: 'pcm16',
+          }),
+        ),
+      );
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'response.output_audio_transcript.done',
+            transcript: 'Alias transcript',
+          }),
+        ),
+      );
+      lastHandler(
+        Buffer.from(
+          JSON.stringify({
+            type: 'response.done',
+            response: {
+              usage: {
+                total_tokens: 10,
+                input_tokens: 5,
+                output_tokens: 5,
+                output_token_details: {
+                  audio_tokens: 12,
+                },
+              },
+            },
+          }),
+        ),
+      );
+
+      const response = await responsePromise;
+      expect(response.output).toBe('Alias transcript');
+      expect(response.metadata?.audio?.format).toBe('wav');
+      expect(response.metadata?.eventCounts?.['response.output_audio.delta']).toBe(1);
+      expect(response.metadata?.outputTranscript).toBe('Alias transcript');
+    });
+
+    it('should execute functionToolCallbacks in persistent websocket mode', async () => {
+      const provider = new OpenAiRealtimeProvider('gpt-realtime', {
+        config: {
+          modalities: ['text'],
+          maintainContext: true,
+          functionToolCallbacks: {
+            lookup_order: async (args) => JSON.stringify({ ok: true, args }),
+          },
+        },
+      });
+
+      provider.persistentConnection = {
+        on: vi.fn((event: string, handler: Function) => {
+          mockHandlers[event].push(handler);
+          return provider.persistentConnection;
+        }),
+        once: vi.fn((event: string, handler: Function) => {
+          mockHandlers[event].push(handler);
+          return provider.persistentConnection;
+        }),
+        send: vi.fn(),
+        close: vi.fn(),
+        removeListener: vi.fn(),
+      } as unknown as WebSocket;
+
+      const context = {
+        test: {
+          metadata: { conversationId: 'test-conv-functions' },
+        },
+      } as any;
+
+      const responsePromise = provider.callApi('Check order status', context);
+      await Promise.resolve();
+
+      const messageHandlers = mockHandlers.message;
+      const lastHandler = messageHandlers[messageHandlers.length - 1];
+
+      await Promise.resolve(
+        lastHandler(
+          Buffer.from(
+            JSON.stringify({
+              type: 'conversation.item.created',
+              item: { id: 'msg_fn_1', role: 'user' },
+            }),
+          ),
+        ),
+      );
+      await Promise.resolve(
+        lastHandler(
+          Buffer.from(
+            JSON.stringify({
+              type: 'response.created',
+              response: { id: 'resp_fn_1' },
+            }),
+          ),
+        ),
+      );
+      await Promise.resolve(
+        lastHandler(
+          Buffer.from(
+            JSON.stringify({
+              type: 'response.output_item.added',
+              item: {
+                type: 'function_call',
+                call_id: 'call_1',
+                name: 'lookup_order',
+                arguments: '{"orderId":"123"}',
+              },
+            }),
+          ),
+        ),
+      );
+      await Promise.resolve(
+        lastHandler(
+          Buffer.from(
+            JSON.stringify({
+              type: 'response.function_call_arguments.done',
+              call_id: 'call_1',
+              arguments: '{"orderId":"123"}',
+            }),
+          ),
+        ),
+      );
+      await Promise.resolve(
+        lastHandler(
+          Buffer.from(
+            JSON.stringify({
+              type: 'response.done',
+              response: {
+                usage: {
+                  total_tokens: 6,
+                  input_tokens: 3,
+                  output_tokens: 3,
+                },
+              },
+            }),
+          ),
+        ),
+      );
+
+      const sentAfterFunction = (
+        provider.persistentConnection as WebSocket & { send: Mock }
+      ).send.mock.calls.map(([payload]) => JSON.parse(payload as string));
+      expect(
+        sentAfterFunction.some(
+          (event: { item?: { type?: string; call_id?: string; output?: string } }) =>
+            event.item?.type === 'function_call_output' &&
+            event.item.call_id === 'call_1' &&
+            event.item.output === '{"ok":true,"args":"{\\"orderId\\":\\"123\\"}"}',
+        ),
+      ).toBe(true);
+
+      await Promise.resolve(
+        lastHandler(
+          Buffer.from(
+            JSON.stringify({
+              type: 'response.created',
+              response: { id: 'resp_fn_2' },
+            }),
+          ),
+        ),
+      );
+      await Promise.resolve(
+        lastHandler(
+          Buffer.from(
+            JSON.stringify({
+              type: 'response.text.done',
+              text: 'Order 123 is confirmed.',
+            }),
+          ),
+        ),
+      );
+      await Promise.resolve(
+        lastHandler(
+          Buffer.from(
+            JSON.stringify({
+              type: 'response.done',
+              response: {
+                usage: {
+                  total_tokens: 12,
+                  input_tokens: 6,
+                  output_tokens: 6,
+                },
+              },
+            }),
+          ),
+        ),
+      );
+
+      const response = await responsePromise;
+      expect(response.output).toContain('Order 123 is confirmed.');
+      expect(response.metadata?.functionCalls).toEqual([
+        expect.objectContaining({
+          id: 'call_1',
+          name: 'lookup_order',
+          output: '{"ok":true,"args":"{\\"orderId\\":\\"123\\"}"}',
+        }),
+      ]);
+      expect(response.metadata?.functionCallOccurred).toBe(true);
+    });
+
     it('should reuse existing connection for subsequent requests', async () => {
       // Skip this test since it's difficult to mock properly and causes flakey results
       // The functionality is tested in other tests
