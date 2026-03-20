@@ -22,6 +22,7 @@ import type {
   CallApiContextParams,
   CallApiOptionsParams,
   ProviderResponse,
+  SkillCallEntry,
 } from '../../types/index';
 
 /**
@@ -218,10 +219,18 @@ export interface OpenAICodexSDKConfig {
  * Uses resolvePackageEntryPoint to handle ESM-only packages with restrictive exports
  */
 async function loadCodexSDK(): Promise<any> {
-  const basePath =
-    cliState.basePath && path.isAbsolute(cliState.basePath) ? cliState.basePath : process.cwd();
+  const basePaths = [
+    cliState.basePath && path.isAbsolute(cliState.basePath) ? cliState.basePath : undefined,
+    process.cwd(),
+  ].filter((candidate): candidate is string => Boolean(candidate));
 
-  const codexPath = resolvePackageEntryPoint('@openai/codex-sdk', basePath);
+  let codexPath: string | null = null;
+  for (const basePath of new Set(basePaths)) {
+    codexPath = resolvePackageEntryPoint('@openai/codex-sdk', basePath);
+    if (codexPath) {
+      break;
+    }
+  }
 
   if (!codexPath) {
     throw new Error(
@@ -385,9 +394,10 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     config: OpenAICodexSDKConfig,
     traceparent?: string,
   ): Record<string, string> {
-    const env: Record<string, string> = config.cli_env
-      ? { ...config.cli_env }
-      : ({ ...process.env } as Record<string, string>);
+    const env: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      ...(config.cli_env ?? {}),
+    };
 
     // Sort keys for stable cache key generation
     const sortedEnv: Record<string, string> = {};
@@ -451,6 +461,111 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     }
 
     return sortedEnv;
+  }
+
+  private getSkillRootPrefixes(env: Record<string, string>): string[] {
+    const prefixes = new Set<string>();
+
+    const addPrefix = (candidate?: string) => {
+      if (!candidate) {
+        return;
+      }
+
+      const normalized = candidate.replace(/\\/g, '/').replace(/\/+$/g, '');
+      if (normalized) {
+        prefixes.add(normalized);
+      }
+    };
+
+    addPrefix(env.CODEX_HOME);
+    addPrefix('/etc/codex');
+
+    const homeDir = env.HOME || process.env.HOME;
+    if (homeDir) {
+      addPrefix(path.posix.join(homeDir.replace(/\\/g, '/'), '.codex'));
+    }
+
+    return Array.from(prefixes);
+  }
+
+  private extractSkillPathCandidates(
+    text: string,
+    skillRootPrefixes: readonly string[] = [],
+  ): Array<{ name: string; path: string }> {
+    const matches = new Map<string, { name: string; path: string }>();
+
+    for (const rawToken of text.split(/\s+/)) {
+      const token = rawToken.replace(/^[`"'([{]+|[`"',;:)\]}]+$/g, '').trim();
+      if (!token) {
+        continue;
+      }
+
+      const normalizedPath = token.replace(/\\/g, '/');
+      const repoSkillIndex = normalizedPath.indexOf('.agents/skills/');
+      if (repoSkillIndex !== -1) {
+        const repoSkillPath = normalizedPath.slice(repoSkillIndex);
+        const repoMatch = repoSkillPath.match(/^\.agents\/skills\/([^/]+)\/SKILL\.md$/);
+        if (repoMatch) {
+          matches.set(repoSkillPath, { name: repoMatch[1], path: repoSkillPath });
+        }
+        continue;
+      }
+
+      const matchingRoot = skillRootPrefixes.find((prefix) =>
+        normalizedPath.startsWith(`${prefix}/skills/`),
+      );
+      if (!matchingRoot) {
+        continue;
+      }
+
+      const relativeSkillPath = normalizedPath.slice(matchingRoot.length + 1);
+      const customRootMatch = relativeSkillPath.match(/^skills\/([^/]+)\/SKILL\.md$/);
+      if (customRootMatch) {
+        matches.set(normalizedPath, { name: customRootMatch[1], path: normalizedPath });
+      }
+    }
+
+    return Array.from(matches.values());
+  }
+
+  private extractSkillCallsFromItems(
+    items: any[],
+    skillRootPrefixes: readonly string[] = [],
+  ): SkillCallEntry[] {
+    const skillCalls = new Map<
+      string,
+      {
+        name: string;
+        path: string;
+      }
+    >();
+
+    for (const item of items) {
+      if (item?.type !== 'command_execution') {
+        continue;
+      }
+
+      const candidateTexts = [item.command, item.aggregated_output].filter(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0,
+      );
+
+      for (const candidateText of candidateTexts) {
+        for (const skillPath of this.extractSkillPathCandidates(candidateText, skillRootPrefixes)) {
+          const existing = skillCalls.get(skillPath.path) ?? {
+            name: skillPath.name,
+            path: skillPath.path,
+          };
+
+          skillCalls.set(skillPath.path, existing);
+        }
+      }
+    }
+
+    return Array.from(skillCalls.values()).map((skillCall) => ({
+      name: skillCall.name,
+      path: skillCall.path,
+      source: 'heuristic',
+    }));
   }
 
   private validateWorkingDirectory(workingDir: string, skipGitCheck: boolean = false): void {
@@ -580,6 +695,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     prompt: string,
     runOptions: any,
     callOptions?: CallApiOptionsParams,
+    skillRootPrefixes: readonly string[] = [],
   ): Promise<any> {
     const { events } = await thread.runStreamed(prompt, runOptions);
     const items: any[] = [];
@@ -637,7 +753,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
               attributes: {
                 'codex.item.id': itemId,
                 'codex.item.type': item.type,
-                ...this.getAttributesForItem(item),
+                ...this.getAttributesForItem(item, skillRootPrefixes),
               },
             });
             activeSpans.set(itemId, span);
@@ -683,13 +799,13 @@ export class OpenAICodexSDKProvider implements ApiProvider {
                   'codex.item.id': itemId,
                   'codex.item.type': item.type,
                   'codex.timing.estimated': true, // Mark that timing is estimated
-                  ...this.getAttributesForItem(item),
+                  ...this.getAttributesForItem(item, skillRootPrefixes),
                 },
               });
             }
 
             // Add completion attributes
-            const completionAttrs = this.getCompletionAttributesForItem(item);
+            const completionAttrs = this.getCompletionAttributesForItem(item, skillRootPrefixes);
             for (const [key, value] of Object.entries(completionAttrs)) {
               span.setAttribute(key, value);
             }
@@ -753,7 +869,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
               const itemId = String(item.id);
               const span = activeSpans.get(itemId);
               if (span) {
-                const updatedAttrs = this.getCompletionAttributesForItem(item);
+                const updatedAttrs = this.getCompletionAttributesForItem(item, skillRootPrefixes);
                 for (const [key, value] of Object.entries(updatedAttrs)) {
                   span.setAttribute(key, value);
                 }
@@ -855,7 +971,48 @@ export class OpenAICodexSDKProvider implements ApiProvider {
   /**
    * Get attributes for a Codex item at start
    */
-  private getAttributesForItem(item: any): Record<string, string | number | boolean> {
+  private getSkillTraceAttributes(
+    item: any,
+    skillRootPrefixes: readonly string[] = [],
+  ): Record<string, string | number | boolean> {
+    if (item?.type !== 'command_execution') {
+      return {};
+    }
+
+    const candidateTexts = [item.command, item.aggregated_output].filter(
+      (value): value is string => typeof value === 'string' && value.trim().length > 0,
+    );
+    const skillCandidates = new Map<string, { name: string; path: string }>();
+
+    for (const candidateText of candidateTexts) {
+      for (const skill of this.extractSkillPathCandidates(candidateText, skillRootPrefixes)) {
+        skillCandidates.set(skill.path, skill);
+      }
+    }
+
+    if (skillCandidates.size === 0) {
+      return {};
+    }
+
+    const skills = Array.from(skillCandidates.values());
+    const attrs: Record<string, string | number | boolean> = {
+      'promptfoo.skill.count': skills.length,
+      'promptfoo.skill.names': skills.map((skill) => skill.name).join(','),
+      'promptfoo.skill.paths': skills.map((skill) => skill.path).join(','),
+    };
+
+    if (skills.length === 1) {
+      attrs['promptfoo.skill.name'] = skills[0].name;
+      attrs['promptfoo.skill.path'] = skills[0].path;
+    }
+
+    return attrs;
+  }
+
+  private getAttributesForItem(
+    item: any,
+    skillRootPrefixes: readonly string[] = [],
+  ): Record<string, string | number | boolean> {
     const attrs: Record<string, string | number | boolean> = {};
 
     switch (item.type) {
@@ -863,6 +1020,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
         if (typeof item.command === 'string') {
           attrs['codex.command'] = item.command;
         }
+        Object.assign(attrs, this.getSkillTraceAttributes(item, skillRootPrefixes));
         break;
       case 'mcp_tool_call':
         if (typeof item.server === 'string') {
@@ -963,7 +1121,10 @@ export class OpenAICodexSDKProvider implements ApiProvider {
   /**
    * Get attributes for a Codex item at completion
    */
-  private getCompletionAttributesForItem(item: any): Record<string, string | number | boolean> {
+  private getCompletionAttributesForItem(
+    item: any,
+    skillRootPrefixes: readonly string[] = [],
+  ): Record<string, string | number | boolean> {
     const attrs: Record<string, string | number | boolean> = {};
 
     switch (item.type) {
@@ -977,6 +1138,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
         if (typeof item.aggregated_output === 'string') {
           attrs['codex.output'] = item.aggregated_output;
         }
+        Object.assign(attrs, this.getSkillTraceAttributes(item, skillRootPrefixes));
         break;
       case 'file_change':
         if (typeof item.status === 'string') {
@@ -1167,6 +1329,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
 
     // Prepare environment with OTEL config for deep tracing
     const env: Record<string, string> = this.prepareEnvironment(config, currentTraceparent);
+    const skillRootPrefixes = this.getSkillRootPrefixes(env);
 
     if (!this.apiKey && !env.OPENAI_API_KEY && !env.CODEX_API_KEY) {
       throw new Error(
@@ -1261,12 +1424,17 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     // Execute turn
     try {
       const turn = config.enable_streaming
-        ? await this.runStreaming(thread, prompt, runOptions, callOptions)
+        ? await this.runStreaming(thread, prompt, runOptions, callOptions, skillRootPrefixes)
         : await thread.run(prompt, runOptions);
 
       // Extract response
       const output = turn.finalResponse || '';
       const raw = JSON.stringify(turn);
+      const skillCalls =
+        Array.isArray(turn.items) && turn.items.length > 0
+          ? this.extractSkillCallsFromItems(turn.items, skillRootPrefixes)
+          : [];
+      const metadata = skillCalls.length > 0 ? { skillCalls } : undefined;
 
       const tokenUsage: ProviderResponse['tokenUsage'] = turn.usage
         ? {
@@ -1299,6 +1467,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
         output,
         tokenUsage,
         cost,
+        metadata,
         raw,
         sessionId: thread.id || 'unknown',
       };

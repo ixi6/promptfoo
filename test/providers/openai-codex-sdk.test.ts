@@ -2,7 +2,8 @@ import fs from 'fs';
 
 import { afterEach, beforeEach, describe, expect, it, MockInstance, vi } from 'vitest';
 import { clearCache } from '../../src/cache';
-import { importModule } from '../../src/esm';
+import cliState from '../../src/cliState';
+import { importModule, resolvePackageEntryPoint } from '../../src/esm';
 import logger from '../../src/logger';
 import { OpenAICodexSDKProvider } from '../../src/providers/openai/codex-sdk';
 
@@ -51,6 +52,7 @@ vi.mock('@openai/codex-sdk', () => mockCodexSDK);
 const createMockResponse = (
   finalResponse: string,
   usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number },
+  items: any[] = [],
 ) => ({
   finalResponse,
   usage: usage
@@ -60,16 +62,20 @@ const createMockResponse = (
         output_tokens: usage.output_tokens ?? 0,
       }
     : undefined,
-  items: [],
+  items,
 });
 
 describe('OpenAICodexSDKProvider', () => {
   let statSyncSpy: MockInstance;
   let existsSyncSpy: MockInstance;
   const mockImportModule = vi.mocked(importModule);
+  const mockResolvePackageEntryPoint = vi.mocked(resolvePackageEntryPoint);
+  let originalBasePath: string | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    originalBasePath = cliState.basePath;
+    cliState.basePath = undefined;
 
     // Reset mock implementations
     mockStartThread.mockReturnValue(mockThread);
@@ -77,6 +83,8 @@ describe('OpenAICodexSDKProvider', () => {
 
     // Mock importModule to return our mock SDK
     mockImportModule.mockResolvedValue(mockCodexSDK);
+    mockResolvePackageEntryPoint.mockReset();
+    mockResolvePackageEntryPoint.mockReturnValue('@openai/codex-sdk');
 
     // Default mocks
     statSyncSpy = vi.spyOn(fs, 'statSync').mockReturnValue({
@@ -87,6 +95,7 @@ describe('OpenAICodexSDKProvider', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    cliState.basePath = originalBasePath;
     await clearCache();
   });
 
@@ -210,6 +219,187 @@ describe('OpenAICodexSDKProvider', () => {
 
         const provider = new OpenAICodexSDKProvider();
         await expect(provider.callApi('Test prompt')).rejects.toThrow(/OpenAI API key is not set/);
+      });
+
+      it('should fall back to process.cwd() when resolving the SDK from an external config base path', async () => {
+        mockRun.mockResolvedValue(createMockResponse('Response'));
+        cliState.basePath = '/tmp/external-config';
+        mockResolvePackageEntryPoint.mockImplementation((packageName, basePath) => {
+          if (basePath === '/tmp/external-config') {
+            return null;
+          }
+          return packageName === '@openai/codex-sdk' ? '@openai/codex-sdk' : null;
+        });
+
+        const provider = new OpenAICodexSDKProvider({
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+
+        const result = await provider.callApi('Test prompt');
+
+        expect(result.error).toBeUndefined();
+        expect(mockResolvePackageEntryPoint).toHaveBeenNthCalledWith(
+          1,
+          '@openai/codex-sdk',
+          '/tmp/external-config',
+        );
+        expect(mockResolvePackageEntryPoint).toHaveBeenNthCalledWith(
+          2,
+          '@openai/codex-sdk',
+          process.cwd(),
+        );
+      });
+
+      it('should infer skillCalls from Codex command traces', async () => {
+        mockRun.mockResolvedValue(
+          createMockResponse('CERULEAN-FALCON-SKILL', undefined, [
+            {
+              id: 'item-1',
+              type: 'command_execution',
+              command: `/bin/zsh -lc "sed -n '1,200p' .agents/skills/token-skill/SKILL.md"`,
+              aggregated_output: '',
+              exit_code: 0,
+              status: 'completed',
+            },
+            {
+              id: 'item-2',
+              type: 'command_execution',
+              command: "/bin/zsh -lc 'find .agents -maxdepth 5 -type f -print'",
+              aggregated_output:
+                '.agents/skills/token-skill/SKILL.md\n.agents/skills/token-skill/agents/openai.yaml\n',
+              exit_code: 0,
+              status: 'completed',
+            },
+            {
+              id: 'item-3',
+              type: 'agent_message',
+              text: 'CERULEAN-FALCON-SKILL',
+            },
+          ]),
+        );
+
+        const provider = new OpenAICodexSDKProvider({
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+        const result = await provider.callApi('Use the token-skill skill');
+
+        expect(result.metadata).toEqual({
+          skillCalls: [
+            {
+              name: 'token-skill',
+              path: '.agents/skills/token-skill/SKILL.md',
+              source: 'heuristic',
+            },
+          ],
+        });
+      });
+
+      it('should omit skillCalls when no skill files are read', async () => {
+        mockRun.mockResolvedValue(
+          createMockResponse('4', undefined, [
+            {
+              id: 'item-1',
+              type: 'command_execution',
+              command: '/bin/zsh -lc ls',
+              aggregated_output: '',
+              exit_code: 0,
+              status: 'completed',
+            },
+            {
+              id: 'item-2',
+              type: 'agent_message',
+              text: '4',
+            },
+          ]),
+        );
+
+        const provider = new OpenAICodexSDKProvider({
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+        const result = await provider.callApi('What is 2 + 2?');
+
+        expect(result.metadata).toBeUndefined();
+      });
+
+      it('should infer skillCalls from custom CODEX_HOME skill directories', async () => {
+        mockRun.mockResolvedValue(
+          createMockResponse('HOME-SKILL', undefined, [
+            {
+              id: 'item-1',
+              type: 'command_execution',
+              command: "/bin/zsh -lc 'cat /tmp/promptfoo-codex-home/skills/home-skill/SKILL.md'",
+              aggregated_output: '',
+              exit_code: 0,
+              status: 'completed',
+            },
+          ]),
+        );
+
+        const provider = new OpenAICodexSDKProvider({
+          config: {
+            cli_env: {
+              CODEX_HOME: '/tmp/promptfoo-codex-home',
+            },
+          },
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+        const result = await provider.callApi('Use the home skill');
+
+        expect(result.metadata).toEqual({
+          skillCalls: [
+            {
+              name: 'home-skill',
+              path: '/tmp/promptfoo-codex-home/skills/home-skill/SKILL.md',
+              source: 'heuristic',
+            },
+          ],
+        });
+      });
+
+      it('should ignore unrelated SKILL.md paths outside known Codex skill roots', async () => {
+        mockRun.mockResolvedValue(
+          createMockResponse('UNRELATED', undefined, [
+            {
+              id: 'item-1',
+              type: 'command_execution',
+              command:
+                "/bin/zsh -lc 'cat /tmp/unrelated-project/skills/not-a-codex-skill/SKILL.md'",
+              aggregated_output: '',
+              exit_code: 0,
+              status: 'completed',
+            },
+          ]),
+        );
+
+        const provider = new OpenAICodexSDKProvider({
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+        const result = await provider.callApi('Read the unrelated SKILL file');
+
+        expect(result.metadata).toBeUndefined();
+      });
+
+      it('should ignore arbitrary hidden .codex skill paths outside the configured home root', async () => {
+        mockRun.mockResolvedValue(
+          createMockResponse('UNRELATED', undefined, [
+            {
+              id: 'item-1',
+              type: 'command_execution',
+              command:
+                "/bin/zsh -lc 'cat /tmp/unrelated-home/.codex/skills/not-a-codex-skill/SKILL.md'",
+              aggregated_output: '',
+              exit_code: 0,
+              status: 'completed',
+            },
+          ]),
+        );
+
+        const provider = new OpenAICodexSDKProvider({
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+        const result = await provider.callApi('Read the unrelated hidden Codex skill file');
+
+        expect(result.metadata).toBeUndefined();
       });
     });
 
@@ -988,6 +1178,34 @@ describe('OpenAICodexSDKProvider', () => {
           }),
         );
       });
+
+      it('should merge cli_env with inherited process env', async () => {
+        mockRun.mockResolvedValue(createMockResponse('Response'));
+
+        process.env.PROMPTFOO_TEST_EXISTING = 'present';
+        try {
+          const provider = new OpenAICodexSDKProvider({
+            config: {
+              cli_env: { CODEX_HOME: '/tmp/codex-home' },
+            },
+            env: { OPENAI_API_KEY: 'test-api-key' },
+          });
+
+          await provider.callApi('Test prompt');
+
+          expect(MockCodex).toHaveBeenCalledWith(
+            expect.objectContaining({
+              env: expect.objectContaining({
+                PROMPTFOO_TEST_EXISTING: 'present',
+                CODEX_HOME: '/tmp/codex-home',
+                OPENAI_API_KEY: 'test-api-key',
+              }),
+            }),
+          );
+        } finally {
+          delete process.env.PROMPTFOO_TEST_EXISTING;
+        }
+      });
     });
 
     describe('GPT-5.2, GPT-5.3, and GPT-5.4 models', () => {
@@ -1385,6 +1603,60 @@ describe('OpenAICodexSDKProvider', () => {
       ).toEqual({
         'codex.status': 'completed',
         'codex.mcp.input': '[REDACTED]',
+      });
+    });
+
+    it('should attach inferred skill attributes to Codex command spans', () => {
+      const provider = new OpenAICodexSDKProvider({
+        env: { OPENAI_API_KEY: 'test-api-key' },
+      });
+
+      expect(
+        (provider as any).getAttributesForItem(
+          {
+            type: 'command_execution',
+            command:
+              "/bin/zsh -lc 'cat /tmp/promptfoo-codex-home/skills/token-skill/SKILL.md && cat .agents/skills/repo-skill/SKILL.md'",
+          },
+          ['/tmp/promptfoo-codex-home'],
+        ),
+      ).toEqual({
+        'codex.command':
+          "/bin/zsh -lc 'cat /tmp/promptfoo-codex-home/skills/token-skill/SKILL.md && cat .agents/skills/repo-skill/SKILL.md'",
+        'promptfoo.skill.count': 2,
+        'promptfoo.skill.names': 'token-skill,repo-skill',
+        'promptfoo.skill.paths':
+          '/tmp/promptfoo-codex-home/skills/token-skill/SKILL.md,.agents/skills/repo-skill/SKILL.md',
+      });
+
+      expect(
+        (provider as any).getCompletionAttributesForItem(
+          {
+            type: 'command_execution',
+            status: 'completed',
+            aggregated_output:
+              '/tmp/promptfoo-codex-home/skills/token-skill/SKILL.md\n.agents/skills/repo-skill/SKILL.md\n',
+          },
+          ['/tmp/promptfoo-codex-home'],
+        ),
+      ).toEqual({
+        'codex.status': 'completed',
+        'codex.output':
+          '/tmp/promptfoo-codex-home/skills/token-skill/SKILL.md\n.agents/skills/repo-skill/SKILL.md\n',
+        'promptfoo.skill.count': 2,
+        'promptfoo.skill.names': 'token-skill,repo-skill',
+        'promptfoo.skill.paths':
+          '/tmp/promptfoo-codex-home/skills/token-skill/SKILL.md,.agents/skills/repo-skill/SKILL.md',
+      });
+
+      expect(
+        (provider as any).getAttributesForItem({
+          type: 'command_execution',
+          command: "/bin/zsh -lc 'cat /tmp/unrelated-project/skills/not-a-codex-skill/SKILL.md'",
+        }),
+      ).toEqual({
+        'codex.command':
+          "/bin/zsh -lc 'cat /tmp/unrelated-project/skills/not-a-codex-skill/SKILL.md'",
       });
     });
   });

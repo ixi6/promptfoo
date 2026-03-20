@@ -8,6 +8,16 @@ import type { EvaluateOptions, TestSuite } from '../../src/types/index';
 
 // Mock dependencies
 vi.mock('../../src/tracing/store');
+const mockFlushOtel = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockInitializeOtel = vi.hoisted(() => vi.fn());
+const mockShutdownOtel = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock('../../src/tracing/otelSdk', () => ({
+  flushOtel: mockFlushOtel,
+  initializeOtel: mockInitializeOtel,
+  shutdownOtel: mockShutdownOtel,
+}));
+
 vi.mock('../../src/tracing/otlpReceiver', () => ({
   startOTLPReceiver: vi.fn(),
   stopOTLPReceiver: vi.fn(),
@@ -130,6 +140,7 @@ describe('evaluator trace integration', () => {
 
     // Verify trace was fetched for assertion
     expect(mockTraceStore.getTrace).toHaveBeenCalledWith(testTraceId);
+    expect(mockFlushOtel).toHaveBeenCalled();
 
     // Verify result was added with passing assertion
     expect(mockEval.addResult).toHaveBeenCalledWith(
@@ -183,6 +194,7 @@ describe('evaluator trace integration', () => {
     // Verify trace was NOT created or fetched
     expect(mockTraceStore.createTrace).not.toHaveBeenCalled();
     expect(mockTraceStore.getTrace).not.toHaveBeenCalled();
+    expect(mockFlushOtel).not.toHaveBeenCalled();
 
     // Verify result was added with passing assertion
     expect(mockEval.addResult).toHaveBeenCalledWith(
