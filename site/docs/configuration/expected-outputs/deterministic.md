@@ -654,7 +654,7 @@ The `skill-used` assertion checks normalized provider skill metadata rather than
 Promptfoo currently populates `metadata.skillCalls` for:
 
 - Claude Agent SDK, by normalizing `Skill` tool calls.
-- OpenAI Codex SDK, by inferring skill usage from `SKILL.md` reads in Codex command traces.
+- OpenAI Codex SDK, by inferring skill usage from command text that directly references a local `SKILL.md` path.
 
 Example:
 

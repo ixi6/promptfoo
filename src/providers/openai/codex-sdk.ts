@@ -615,6 +615,26 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     }));
   }
 
+  private buildSkillMetadata(
+    items: any[],
+    skillRootPrefixes: readonly string[] = [],
+  ): { attemptedSkillCalls: SkillCallEntry[]; skillCalls: SkillCallEntry[] } | undefined {
+    if (!Array.isArray(items) || items.length === 0) {
+      return undefined;
+    }
+
+    const attemptedSkillCalls = this.extractSkillCallsFromItems(items, skillRootPrefixes);
+    const skillCalls = this.extractSkillCallsFromItems(items, skillRootPrefixes, {
+      requireSuccessfulCommand: true,
+    });
+
+    if (skillCalls.length === 0 && attemptedSkillCalls.length <= skillCalls.length) {
+      return undefined;
+    }
+
+    return { attemptedSkillCalls, skillCalls };
+  }
+
   private isSuccessfulCommandExecution(item: any): boolean {
     if (item?.type !== 'command_execution') {
       return false;
@@ -816,7 +836,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
               attributes: {
                 'codex.item.id': itemId,
                 'codex.item.type': item.type,
-                ...this.getAttributesForItem(item, skillRootPrefixes),
+                ...this.getAttributesForItem(item),
               },
             });
             activeSpans.set(itemId, span);
@@ -862,7 +882,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
                   'codex.item.id': itemId,
                   'codex.item.type': item.type,
                   'codex.timing.estimated': true, // Mark that timing is estimated
-                  ...this.getAttributesForItem(item, skillRootPrefixes),
+                  ...this.getAttributesForItem(item),
                 },
               });
             }
@@ -1075,10 +1095,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     return attrs;
   }
 
-  private getAttributesForItem(
-    item: any,
-    _skillRootPrefixes: readonly string[] = [],
-  ): Record<string, string | number | boolean> {
+  private getAttributesForItem(item: any): Record<string, string | number | boolean> {
     const attrs: Record<string, string | number | boolean> = {};
 
     switch (item.type) {
@@ -1500,23 +1517,17 @@ export class OpenAICodexSDKProvider implements ApiProvider {
       // Extract response
       const output = turn.finalResponse || '';
       const raw = JSON.stringify(turn);
-      const attemptedSkillCalls =
-        Array.isArray(turn.items) && turn.items.length > 0
-          ? this.extractSkillCallsFromItems(turn.items, skillRootPrefixes)
-          : [];
-      const skillCalls =
-        Array.isArray(turn.items) && turn.items.length > 0
-          ? this.extractSkillCallsFromItems(turn.items, skillRootPrefixes, {
-              requireSuccessfulCommand: true,
-            })
-          : [];
-      const metadata =
-        skillCalls.length > 0 || attemptedSkillCalls.length > skillCalls.length
-          ? {
-              ...(skillCalls.length > 0 ? { skillCalls } : {}),
-              ...(attemptedSkillCalls.length > skillCalls.length ? { attemptedSkillCalls } : {}),
-            }
-          : undefined;
+      const skillMetadata = this.buildSkillMetadata(turn.items, skillRootPrefixes);
+      const metadata = skillMetadata
+        ? {
+            ...(skillMetadata.skillCalls.length > 0
+              ? { skillCalls: skillMetadata.skillCalls }
+              : {}),
+            ...(skillMetadata.attemptedSkillCalls.length > skillMetadata.skillCalls.length
+              ? { attemptedSkillCalls: skillMetadata.attemptedSkillCalls }
+              : {}),
+          }
+        : undefined;
 
       const tokenUsage: ProviderResponse['tokenUsage'] = turn.usage
         ? {
