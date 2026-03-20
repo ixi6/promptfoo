@@ -84,6 +84,7 @@ import { OllamaChatProvider, OllamaCompletionProvider, OllamaEmbeddingProvider }
 import { OpenAiAssistantProvider } from './openai/assistant';
 import { OpenAiChatCompletionProvider } from './openai/chat';
 import { OpenAiCompletionProvider } from './openai/completion';
+import { DEFAULT_SIMULATED_USER_MODEL } from './openai/defaults';
 import { OpenAiEmbeddingProvider } from './openai/embedding';
 import { OpenAiImageProvider } from './openai/image';
 import { OpenAiModerationProvider } from './openai/moderation';
@@ -206,6 +207,12 @@ function getConfiguredOpenAiModel(providerOptions: ProviderOptions): string | un
   return typeof configuredModel === 'string' && configuredModel.trim().length > 0
     ? configuredModel
     : undefined;
+}
+
+function getDefaultSimulatedUserProvider(): ProviderOptions {
+  return {
+    id: `openai:chat:${DEFAULT_SIMULATED_USER_MODEL}`,
+  };
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider dispatch is intentionally centralized here
@@ -1648,7 +1655,7 @@ export const providerMap: ProviderFactory[] = [
       context: LoadApiProviderContext,
     ) => {
       const resolvedUserProvider = await resolveNestedProvider(
-        providerOptions.config?.userProvider,
+        providerOptions.config?.userProvider ?? getDefaultSimulatedUserProvider(),
         context,
         'promptfoo:simulated-user',
       );

@@ -1,6 +1,7 @@
 import path from 'path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_SIMULATED_USER_MODEL } from '../../src/providers/openai/defaults';
 import { providerMap } from '../../src/providers/registry';
 
 import type { LoadApiProviderContext } from '../../src/types/index';
@@ -171,6 +172,46 @@ describe('Provider Registry', () => {
       ).rejects.toThrow(
         'Provider promptfoo:tau-voice cannot be used as a nested provider inside promptfoo:tau-voice',
       );
+    });
+
+    it('should default regular simulated-user to a local OpenAI provider when userProvider is omitted', async () => {
+      const factory = providerMap.find((f) => f.test('promptfoo:simulated-user'));
+      expect(factory).toBeDefined();
+
+      const provider = await factory!.create(
+        'promptfoo:simulated-user',
+        {
+          id: 'local-first-simulated-user',
+          config: {
+            instructions: 'test instructions',
+            maxTurns: 1,
+          },
+        },
+        mockContext,
+      );
+
+      expect(provider.id()).toBe('local-first-simulated-user');
+      expect((provider as any).resolvedUserProvider?.id()).toBe(
+        `openai:chat:${DEFAULT_SIMULATED_USER_MODEL}`,
+      );
+    });
+
+    it('should preserve an explicit simulated-user userProvider over the local default', async () => {
+      const factory = providerMap.find((f) => f.test('promptfoo:simulated-user'));
+      expect(factory).toBeDefined();
+
+      const provider = await factory!.create(
+        'promptfoo:simulated-user',
+        {
+          config: {
+            instructions: 'test instructions',
+            userProvider: 'echo',
+          },
+        },
+        mockContext,
+      );
+
+      expect((provider as any).resolvedUserProvider?.id()).toBe('echo');
     });
 
     it('should handle redteam providers correctly', async () => {

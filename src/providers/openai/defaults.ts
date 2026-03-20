@@ -3,6 +3,8 @@ import { OpenAiEmbeddingProvider } from './embedding';
 import { OpenAiModerationProvider } from './moderation';
 import { OpenAiResponsesProvider } from './responses';
 
+export const DEFAULT_SIMULATED_USER_MODEL = 'gpt-5-2025-08-07';
+
 export const DefaultEmbeddingProvider = new OpenAiEmbeddingProvider('text-embedding-3-large');
 export const DefaultGradingProvider = new OpenAiChatCompletionProvider('gpt-5-2025-08-07');
 export const DefaultGradingJsonProvider = new OpenAiChatCompletionProvider('gpt-5-2025-08-07', {
