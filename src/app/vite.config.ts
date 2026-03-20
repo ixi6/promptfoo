@@ -111,6 +111,7 @@ export default {
         'src/setupTests.ts',
         'src/**/*.stories.tsx',
       ],
+      all: true,
     },
 
     // Suppress known test warnings that don't indicate real problems

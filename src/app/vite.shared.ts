@@ -46,6 +46,7 @@ export const vendorCodeSplittingGroups = [
 ] as const;
 
 const browserModuleImportFilter = /(?:^|[\\/])(?:logger|createHash)(?:\.ts)?$/;
+const nodeModulesPathPattern = /[\\/]node_modules[\\/]/;
 
 // Extract React Compiler Babel plugins from @vitejs/plugin-react's preset.
 // The type assertion mirrors the shape returned by reactCompilerPreset() —
@@ -123,7 +124,7 @@ export function reactCompilerPlugin(): Plugin {
 
       if (
         !cleanId ||
-        cleanId.includes('/node_modules/') ||
+        nodeModulesPathPattern.test(cleanId) ||
         !reactCompilerFileFilter.test(cleanId) ||
         (reactCompilerCodeFilter && !reactCompilerCodeFilter.test(code))
       ) {

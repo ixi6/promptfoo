@@ -39,6 +39,19 @@ describe('reactCompilerPlugin', () => {
     expect(transformAsync).not.toHaveBeenCalled();
   });
 
+  it('skips files from node_modules with Windows path separators', async () => {
+    const { reactCompilerPlugin } = await import('./vite.shared');
+    const { transformAsync } = await import('@babel/core');
+
+    const result = await reactCompilerPlugin().transform?.(
+      'const Component = () => <div>Hello</div>;',
+      'C:\\project\\node_modules\\pkg\\component.jsx',
+    );
+
+    expect(result).toBeNull();
+    expect(transformAsync).not.toHaveBeenCalled();
+  });
+
   it('passes the expected Babel configuration for app source files', async () => {
     const { reactCompilerPlugin } = await import('./vite.shared');
     const { transformAsync } = await import('@babel/core');
