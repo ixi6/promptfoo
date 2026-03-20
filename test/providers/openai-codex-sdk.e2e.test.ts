@@ -29,10 +29,14 @@ vi.unmock('../../src/esm');
 const hasSdk = fs.existsSync(
   path.resolve(process.cwd(), 'node_modules/@openai/codex-sdk/package.json'),
 );
-const e2eApiKey = process.env.CODEX_E2E_API_KEY || process.env.CODEX_API_KEY;
+const openAiApiKey =
+  process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'test-openai-api-key'
+    ? process.env.OPENAI_API_KEY
+    : undefined;
+const e2eApiKey = process.env.CODEX_E2E_API_KEY || process.env.CODEX_API_KEY || openAiApiKey;
 
-// vitest.setup.ts installs a dummy OPENAI_API_KEY for unit tests. Restore a real key
-// for E2E runs when one is provided via CODEX_API_KEY or CODEX_E2E_API_KEY.
+// vitest.setup.ts installs a dummy OPENAI_API_KEY for unit tests. Ignore that value for E2E runs,
+// and only restore a real key when one is explicitly provided.
 if (e2eApiKey) {
   process.env.OPENAI_API_KEY = e2eApiKey;
   process.env.CODEX_API_KEY = e2eApiKey;
@@ -44,7 +48,7 @@ import { OpenAICodexSDKProvider } from '../../src/providers/openai/codex-sdk';
 const DEFAULT_E2E_MODEL = process.env.CODEX_E2E_MODEL || 'gpt-5.2';
 
 describe('OpenAICodexSDKProvider E2E', () => {
-  const hasApiKey = !!e2eApiKey || !!process.env.OPENAI_API_KEY;
+  const hasApiKey = !!e2eApiKey;
   const testTimeout = 60000; // 60 seconds for real API calls
 
   // Skip all tests if no API key or SDK not installed
@@ -57,7 +61,9 @@ describe('OpenAICodexSDKProvider E2E', () => {
       console.info(`Running E2E tests with model: ${DEFAULT_E2E_MODEL}`);
       console.info('(Set CODEX_E2E_MODEL to use a different model)');
     } else {
-      console.warn('Skipping E2E tests: No OPENAI_API_KEY or CODEX_API_KEY found');
+      console.warn(
+        'Skipping E2E tests: No real CODEX_API_KEY, CODEX_E2E_API_KEY, or OPENAI_API_KEY found',
+      );
     }
   });
 
