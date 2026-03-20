@@ -1654,6 +1654,10 @@ export const providerMap: ProviderFactory[] = [
         providerOptions.config?.ttsProvider,
         context,
       );
+      const resolvedTranscriptionProvider = await resolveNestedProvider(
+        providerOptions.config?.transcriptionProvider,
+        context,
+      );
 
       return new TauVoiceProvider({
         ...providerOptions,
@@ -1661,6 +1665,7 @@ export const providerMap: ProviderFactory[] = [
           ...providerOptions.config,
           _resolvedUserProvider: resolvedUserProvider,
           _resolvedTtsProvider: resolvedTtsProvider,
+          _resolvedTranscriptionProvider: resolvedTranscriptionProvider,
         },
       });
     },

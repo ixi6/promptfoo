@@ -68,6 +68,8 @@ export interface AudioOutput {
   data: Buffer | string;
   format: AudioFormat;
   sampleRate?: number;
+  /** Number of audio channels */
+  channels?: number;
   /** Transcript of the audio */
   transcript?: string;
   /** Duration of the audio in seconds */

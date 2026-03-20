@@ -430,21 +430,10 @@ export const OPENAI_REALTIME_MODELS = [
     id: 'gpt-realtime',
     type: 'chat',
     cost: {
-      input: 32 / 1e6,
-      output: 64 / 1e6,
-      audioInput: 32 / 1e6,
-      audioOutput: 64 / 1e6,
-    },
-  },
-  // gpt-4o realtime models
-  {
-    id: 'gpt-realtime',
-    type: 'chat',
-    cost: {
       input: 4 / 1e6,
       output: 16 / 1e6,
-      audioInput: 40 / 1e6,
-      audioOutput: 80 / 1e6,
+      audioInput: 32 / 1e6,
+      audioOutput: 64 / 1e6,
     },
   },
   {
@@ -526,29 +515,113 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
   {
     id: 'gpt-4o-transcribe',
     cost: {
-      // Per minute costs - OpenAI charges for audio duration, not tokens
-      perMinute: 0.006, // $0.006 per minute
+      input: 2.5 / 1e6,
+      output: 10 / 1e6,
+      audioInput: 6 / 1e6,
     },
   },
   {
     id: 'gpt-4o-mini-transcribe',
     cost: {
-      perMinute: 0.003, // $0.003 per minute
+      input: 0.3 / 1e6,
+      output: 1.2 / 1e6,
+      audioInput: 3 / 1e6,
     },
   },
   {
     id: 'gpt-4o-transcribe-diarize',
     cost: {
-      perMinute: 0.006, // $0.006 per minute (same as base gpt-4o-transcribe)
+      input: 2.5 / 1e6,
+      output: 10 / 1e6,
+      audioInput: 6 / 1e6,
     },
   },
   {
     id: 'whisper-1',
     cost: {
-      perMinute: 0.006, // $0.006 per minute
+      perMinute: 0.006,
     },
   },
 ];
+
+export interface OpenAIUsageBreakdown {
+  audioInput: number;
+  audioOutput: number;
+  cachedInput: number;
+  imageInput: number;
+  textInput: number;
+  textOutput: number;
+  totalInput: number;
+  totalOutput: number;
+}
+
+type OpenAITokenPricedModel = {
+  id: string;
+  cost: {
+    input: number;
+    output: number;
+    audioInput?: number;
+    audioOutput?: number;
+  };
+};
+
+function toFiniteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function getOpenAiTokenPricedModels(): OpenAITokenPricedModel[] {
+  return [
+    ...OPENAI_CHAT_MODELS,
+    ...OPENAI_COMPLETION_MODELS,
+    ...OPENAI_REALTIME_MODELS,
+    ...OPENAI_DEEP_RESEARCH_MODELS,
+    ...OPENAI_TRANSCRIPTION_MODELS,
+  ].filter(
+    (model): model is OpenAITokenPricedModel =>
+      !!model.cost && typeof model.cost.input === 'number' && typeof model.cost.output === 'number',
+  );
+}
+
+export function extractOpenAIUsageBreakdown(usage: any): OpenAIUsageBreakdown | undefined {
+  if (!usage || typeof usage !== 'object') {
+    return undefined;
+  }
+
+  const audioInput =
+    toFiniteNumber(usage.input_token_details?.audio_tokens) ??
+    toFiniteNumber(usage.audio_prompt_tokens) ??
+    0;
+  const audioOutput =
+    toFiniteNumber(usage.output_token_details?.audio_tokens) ??
+    toFiniteNumber(usage.audio_completion_tokens) ??
+    0;
+  const imageInput = toFiniteNumber(usage.input_token_details?.image_tokens) ?? 0;
+  const cachedInput =
+    toFiniteNumber(usage.input_token_details?.cached_tokens) ??
+    toFiniteNumber(usage.cached_prompt_tokens) ??
+    0;
+  const totalInput = toFiniteNumber(usage.input_tokens) ?? toFiniteNumber(usage.prompt_tokens) ?? 0;
+  const totalOutput =
+    toFiniteNumber(usage.output_tokens) ?? toFiniteNumber(usage.completion_tokens) ?? 0;
+
+  const textInput =
+    toFiniteNumber(usage.input_token_details?.text_tokens) ??
+    Math.max(totalInput - audioInput - imageInput, 0);
+  const textOutput =
+    toFiniteNumber(usage.output_token_details?.text_tokens) ??
+    Math.max(totalOutput - audioOutput, 0);
+
+  return {
+    audioInput,
+    audioOutput,
+    cachedInput,
+    imageInput,
+    textInput,
+    textOutput,
+    totalInput,
+    totalOutput,
+  };
+}
 
 export function calculateOpenAICost(
   modelName: string,
@@ -559,12 +632,13 @@ export function calculateOpenAICost(
   audioCompletionTokens?: number,
 ): number | undefined {
   if (!audioPromptTokens && !audioCompletionTokens) {
-    return calculateCost(modelName, config, promptTokens, completionTokens, [
-      ...OPENAI_CHAT_MODELS,
-      ...OPENAI_COMPLETION_MODELS,
-      ...OPENAI_REALTIME_MODELS,
-      ...OPENAI_DEEP_RESEARCH_MODELS,
-    ]);
+    return calculateCost(
+      modelName,
+      config,
+      promptTokens,
+      completionTokens,
+      getOpenAiTokenPricedModels(),
+    );
   }
 
   // Calculate with audio tokens
@@ -581,13 +655,8 @@ export function calculateOpenAICost(
     return undefined;
   }
 
-  const model = [
-    ...OPENAI_CHAT_MODELS,
-    ...OPENAI_COMPLETION_MODELS,
-    ...OPENAI_REALTIME_MODELS,
-    ...OPENAI_DEEP_RESEARCH_MODELS,
-  ].find((m) => m.id === modelName);
-  if (!model || !model.cost) {
+  const model = getOpenAiTokenPricedModels().find((candidate) => candidate.id === modelName);
+  if (!model) {
     return undefined;
   }
 
@@ -595,6 +664,9 @@ export function calculateOpenAICost(
 
   const inputCost = config.cost ?? model.cost.input;
   const outputCost = config.cost ?? model.cost.output;
+  if (typeof inputCost !== 'number' || typeof outputCost !== 'number') {
+    return undefined;
+  }
   totalCost += inputCost * promptTokens + outputCost * completionTokens;
 
   if ('audioInput' in model.cost || 'audioOutput' in model.cost) {
@@ -604,6 +676,26 @@ export function calculateOpenAICost(
   }
 
   return totalCost;
+}
+
+export function calculateOpenAICostFromUsage(
+  modelName: string,
+  config: ProviderConfig,
+  usage: any,
+): number | undefined {
+  const breakdown = extractOpenAIUsageBreakdown(usage);
+  if (!breakdown) {
+    return undefined;
+  }
+
+  return calculateOpenAICost(
+    modelName,
+    config,
+    breakdown.textInput,
+    breakdown.textOutput,
+    breakdown.audioInput,
+    breakdown.audioOutput,
+  );
 }
 
 export function failApiCall(err: any) {

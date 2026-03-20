@@ -833,7 +833,20 @@ describe('OpenAI Realtime Provider', () => {
 
       const response = await responsePromise;
       expect(response.output).toBe('Alias transcript');
+      expect(response.cost).toBeCloseTo(0.000788, 10);
       expect(response.metadata?.audio?.format).toBe('wav');
+      expect(response.metadata?.audio?.sampleRate).toBe(24000);
+      expect(response.metadata?.audio?.channels).toBe(1);
+      expect(response.metadata?.usageBreakdown).toEqual({
+        audioInput: 0,
+        audioOutput: 12,
+        cachedInput: 0,
+        imageInput: 0,
+        textInput: 5,
+        textOutput: 0,
+        totalInput: 5,
+        totalOutput: 5,
+      });
       expect(response.metadata?.eventCounts?.['response.output_audio.delta']).toBe(1);
       expect(response.metadata?.outputTranscript).toBe('Alias transcript');
     });

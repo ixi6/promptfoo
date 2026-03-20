@@ -5,7 +5,11 @@ import { fetchWithCache } from '../../cache';
 import logger from '../../logger';
 import { REQUEST_TIMEOUT_MS } from '../shared';
 import { OpenAiGenericProvider } from './';
-import { OPENAI_TRANSCRIPTION_MODELS } from './util';
+import {
+  calculateOpenAICostFromUsage,
+  extractOpenAIUsageBreakdown,
+  OPENAI_TRANSCRIPTION_MODELS,
+} from './util';
 
 import type { EnvOverrides } from '../../types/env';
 import type {
@@ -13,16 +17,14 @@ import type {
   CallApiOptionsParams,
   ProviderResponse,
 } from '../../types/index';
+import type { OpenAiSharedOptions } from './types';
 
-export interface OpenAiTranscriptionOptions {
-  apiKey?: string;
-  apiKeyEnvar?: string;
-  apiBaseUrl?: string;
-  organization?: string;
+export interface OpenAiTranscriptionOptions extends OpenAiSharedOptions {
   language?: string;
   prompt?: string;
   temperature?: number;
   timestamp_granularities?: ('word' | 'segment')[];
+  chunking_strategy?: string | Record<string, any>;
   // Diarization options (for gpt-4o-transcribe-diarize)
   num_speakers?: number;
   speaker_labels?: string[];
@@ -52,15 +54,16 @@ export class OpenAiTranscriptionProvider extends OpenAiGenericProvider {
     return `[OpenAI Transcription Provider ${this.modelName}]`;
   }
 
-  private calculateTranscriptionCost(durationSeconds: number): number {
+  private calculateLegacyTranscriptionCost(durationSeconds: number): number | undefined {
     const model = OPENAI_TRANSCRIPTION_MODELS.find((m) => m.id === this.modelName);
-    if (!model || !model.cost) {
-      return 0;
+    if (!model || !('perMinute' in (model.cost || {}))) {
+      return undefined;
     }
     const durationMinutes = durationSeconds / 60;
-    return durationMinutes * model.cost.perMinute;
+    return durationMinutes * (model.cost as { perMinute: number }).perMinute;
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: transcription request assembly is parameter-driven and intentionally linear
   async callApi(
     prompt: string,
     context?: CallApiContextParams,
@@ -113,6 +116,14 @@ export class OpenAiTranscriptionProvider extends OpenAiGenericProvider {
       // Diarization-specific options (for gpt-4o-transcribe-diarize)
       if (this.modelName.includes('diarize')) {
         formData.append('response_format', 'diarized_json');
+        formData.append(
+          'chunking_strategy',
+          typeof config.chunking_strategy === 'string'
+            ? config.chunking_strategy
+            : config.chunking_strategy
+              ? JSON.stringify(config.chunking_strategy)
+              : 'auto',
+        );
 
         if (config.num_speakers !== undefined) {
           formData.append('num_speakers', config.num_speakers.toString());
@@ -165,9 +176,12 @@ export class OpenAiTranscriptionProvider extends OpenAiGenericProvider {
         };
       }
 
-      // Calculate cost based on audio duration
       const durationSeconds = data.duration || 0;
-      const cost = cached ? 0 : this.calculateTranscriptionCost(durationSeconds);
+      const usageBreakdown = extractOpenAIUsageBreakdown(data.usage);
+      const cost = cached
+        ? 0
+        : (calculateOpenAICostFromUsage(this.modelName, config, data.usage) ??
+          this.calculateLegacyTranscriptionCost(durationSeconds));
 
       // Calculate average quality metrics from segments
       const segments = data.segments || [];
@@ -235,11 +249,21 @@ export class OpenAiTranscriptionProvider extends OpenAiGenericProvider {
         output,
         cached,
         cost,
+        tokenUsage: data.usage
+          ? {
+              prompt: data.usage.input_tokens || data.usage.prompt_tokens || 0,
+              completion: data.usage.output_tokens || data.usage.completion_tokens || 0,
+              total: data.usage.total_tokens || 0,
+              numRequests: 1,
+            }
+          : undefined,
         metadata: {
           task: data.task,
           duration: durationSeconds,
           language: data.language,
           segments: data.segments?.length || 0,
+          ...(data.usage ? { usage: data.usage } : {}),
+          ...(usageBreakdown ? { usageBreakdown } : {}),
           ...(avgLogprob === undefined ? {} : { avgLogprob }),
           ...(avgCompressionRatio === undefined ? {} : { avgCompressionRatio }),
           ...(avgNoSpeechProb === undefined ? {} : { avgNoSpeechProb }),

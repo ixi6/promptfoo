@@ -5,8 +5,10 @@ import {
   withGenAISpan,
 } from '../../tracing/genaiTracer';
 import { fetchWithProxy } from '../../util/fetch/index';
+import { getPcm16DurationSeconds, parseWavToPcm16 } from '../audio/wav';
 import { REQUEST_TIMEOUT_MS } from '../shared';
 import { OpenAiGenericProvider } from './';
+import { calculateOpenAICost } from './util';
 
 import type { EnvOverrides } from '../../types/env';
 import type {
@@ -37,11 +39,92 @@ export interface OpenAiSpeechOptions extends OpenAiSharedOptions {
 }
 
 const KNOWN_OPENAI_SPEECH_MODELS = ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'];
+const DEFAULT_AUDIO_SAMPLE_RATE = 24000;
+const ESTIMATED_AUDIO_OUTPUT_TOKENS_PER_SECOND: Record<string, number> = {
+  // OpenAI pricing lists gpt-4o-mini-tts at roughly $0.015/minute, which is about 20.83
+  // audio output tokens per second at the published $12 / 1M audio-token rate.
+  'gpt-4o-mini-tts': 20.8333333333,
+};
 
 function normalizeAudioFormat(
   format?: OpenAiSpeechOptions['format'],
 ): NonNullable<ProviderResponse['audio']>['format'] {
   return format === 'pcm' ? 'pcm16' : (format ?? 'wav');
+}
+
+function estimateTokenCount(text: string): number {
+  if (!text.trim()) {
+    return 0;
+  }
+
+  return Math.ceil(
+    text
+      .trim()
+      .split(/\s+/)
+      .filter((word) => word.length > 0).length * 1.3,
+  );
+}
+
+function getAudioDurationSeconds(audioBuffer: Buffer, format?: string): number | undefined {
+  try {
+    if (format === 'pcm16') {
+      return getPcm16DurationSeconds(audioBuffer, DEFAULT_AUDIO_SAMPLE_RATE);
+    }
+
+    if (format === 'wav') {
+      return parseWavToPcm16(audioBuffer).durationSeconds;
+    }
+  } catch (error) {
+    logger.debug('[OpenAI Speech] Failed to inspect audio duration', { error, format });
+  }
+
+  return undefined;
+}
+
+function estimateSpeechUsageAndCost(
+  modelName: string,
+  config: OpenAiSpeechOptions,
+  prompt: string,
+  audioBuffer: Buffer,
+  resolvedFormat?: string,
+) {
+  const promptTokens = estimateTokenCount(prompt);
+  const durationSeconds = getAudioDurationSeconds(audioBuffer, resolvedFormat);
+  const estimatedAudioTokensPerSecond = ESTIMATED_AUDIO_OUTPUT_TOKENS_PER_SECOND[modelName];
+  const estimatedAudioOutputTokens =
+    durationSeconds !== undefined && estimatedAudioTokensPerSecond !== undefined
+      ? Math.max(1, Math.round(durationSeconds * estimatedAudioTokensPerSecond))
+      : undefined;
+
+  const cost =
+    typeof estimatedAudioOutputTokens === 'number'
+      ? calculateOpenAICost(modelName, config, promptTokens, 0, 0, estimatedAudioOutputTokens)
+      : undefined;
+
+  return {
+    cost,
+    durationSeconds,
+    usage:
+      durationSeconds !== undefined || promptTokens > 0
+        ? {
+            type: 'estimated_tokens',
+            input_tokens: promptTokens,
+            input_token_details: {
+              text_tokens: promptTokens,
+            },
+            output_tokens: 0,
+            output_token_details:
+              typeof estimatedAudioOutputTokens === 'number'
+                ? {
+                    text_tokens: 0,
+                    audio_tokens: estimatedAudioOutputTokens,
+                  }
+                : {
+                    text_tokens: 0,
+                  },
+          }
+        : undefined,
+  };
 }
 
 export class OpenAiSpeechProvider extends OpenAiGenericProvider {
@@ -154,21 +237,47 @@ export class OpenAiSpeechProvider extends OpenAiGenericProvider {
 
       const audioBuffer = Buffer.from(await response.arrayBuffer());
       const resolvedFormat = normalizeAudioFormat(config.format);
+      const { cost, durationSeconds, usage } = estimateSpeechUsageAndCost(
+        this.modelName,
+        config,
+        prompt,
+        audioBuffer,
+        resolvedFormat,
+      );
 
       return {
         output: prompt,
+        cost,
+        tokenUsage:
+          usage && typeof usage.input_tokens === 'number'
+            ? {
+                prompt: usage.input_tokens,
+                completion: 0,
+                total: usage.input_tokens,
+                numRequests: 1,
+              }
+            : undefined,
         audio: {
           data: audioBuffer.toString('base64'),
           format: resolvedFormat,
           transcript: prompt,
+          sampleRate: DEFAULT_AUDIO_SAMPLE_RATE,
+          channels: 1,
+          ...(durationSeconds === undefined ? {} : { duration: durationSeconds }),
         },
         metadata: {
           model: this.modelName,
           voice: config.voice || 'alloy',
+          ...(usage ? { usage } : {}),
+          ...(durationSeconds === undefined ? {} : { duration: durationSeconds }),
+          ...(cost === undefined ? {} : { costEstimated: true }),
           audio: {
             data: audioBuffer.toString('base64'),
             format: resolvedFormat,
             transcript: prompt,
+            sampleRate: DEFAULT_AUDIO_SAMPLE_RATE,
+            channels: 1,
+            ...(durationSeconds === undefined ? {} : { duration: durationSeconds }),
           },
           http: {
             status: response.status,

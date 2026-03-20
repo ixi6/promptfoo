@@ -75,11 +75,30 @@ describe('OpenAiSpeechProvider', () => {
       data: Buffer.from([1, 2, 3, 4]).toString('base64'),
       format: 'wav',
       transcript: 'I need help changing my flight.',
+      sampleRate: 24000,
+      channels: 1,
     });
     expect(result.metadata?.audio).toEqual(result.audio);
+    expect(result.metadata?.usage).toEqual({
+      type: 'estimated_tokens',
+      input_tokens: 8,
+      input_token_details: {
+        text_tokens: 8,
+      },
+      output_tokens: 0,
+      output_token_details: {
+        text_tokens: 0,
+      },
+    });
+    expect(result.tokenUsage).toEqual({
+      prompt: 8,
+      completion: 0,
+      total: 8,
+      numRequests: 1,
+    });
   });
 
-  it('should normalize pcm output to pcm16 metadata', async () => {
+  it('should normalize pcm output to pcm16 metadata and estimate duration-based cost', async () => {
     vi.mocked(fetchWithProxy).mockResolvedValue(
       new Response(Uint8Array.from([5, 6, 7, 8]), {
         status: 200,
@@ -95,6 +114,23 @@ describe('OpenAiSpeechProvider', () => {
     const result = await provider.callApi('Short utterance');
 
     expect(result.audio?.format).toBe('pcm16');
+    expect(result.audio?.sampleRate).toBe(24000);
+    expect(result.audio?.channels).toBe(1);
+    expect(result.audio?.duration).toBeCloseTo(2 / 24000, 10);
+    expect(result.cost).toBeCloseTo(0.0000138, 10);
+    expect(result.metadata?.costEstimated).toBe(true);
+    expect(result.metadata?.usage).toEqual({
+      type: 'estimated_tokens',
+      input_tokens: 3,
+      input_token_details: {
+        text_tokens: 3,
+      },
+      output_tokens: 0,
+      output_token_details: {
+        text_tokens: 0,
+        audio_tokens: 1,
+      },
+    });
   });
 
   it('should surface API errors with HTTP metadata', async () => {

@@ -53,6 +53,18 @@ describe('OpenAiTranscriptionProvider', () => {
       text: 'This is a test transcription.',
       duration: 120, // 2 minutes
       language: 'en',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 20,
+        total_tokens: 120,
+        input_token_details: {
+          audio_tokens: 80,
+          text_tokens: 20,
+        },
+        output_token_details: {
+          text_tokens: 20,
+        },
+      },
       segments: [
         {
           id: 0,
@@ -84,6 +96,18 @@ describe('OpenAiTranscriptionProvider', () => {
       task: 'transcribe',
       duration: 180, // 3 minutes
       language: 'en',
+      usage: {
+        input_tokens: 140,
+        output_tokens: 25,
+        total_tokens: 165,
+        input_token_details: {
+          audio_tokens: 110,
+          text_tokens: 30,
+        },
+        output_token_details: {
+          text_tokens: 25,
+        },
+      },
       segments: [
         {
           speaker: 'Speaker 1',
@@ -147,12 +171,40 @@ describe('OpenAiTranscriptionProvider', () => {
       expect(result).toEqual({
         output: 'This is a test transcription.',
         cached: false,
-        cost: 0.012, // 2 minutes * $0.006/min
+        cost: 0.00073,
+        tokenUsage: {
+          prompt: 100,
+          completion: 20,
+          total: 120,
+          numRequests: 1,
+        },
         metadata: {
           task: 'transcribe',
           duration: 120,
           language: 'en',
           segments: 2,
+          usage: {
+            input_tokens: 100,
+            output_tokens: 20,
+            total_tokens: 120,
+            input_token_details: {
+              audio_tokens: 80,
+              text_tokens: 20,
+            },
+            output_token_details: {
+              text_tokens: 20,
+            },
+          },
+          usageBreakdown: {
+            audioInput: 80,
+            audioOutput: 0,
+            cachedInput: 0,
+            imageInput: 0,
+            textInput: 20,
+            textOutput: 20,
+            totalInput: 100,
+            totalOutput: 20,
+          },
           avgLogprob: -0.35, // Average of -0.3 and -0.4
           avgCompressionRatio: 1.15, // Average of 1.2 and 1.1
           avgNoSpeechProb: 0.015, // Average of 0.01 and 0.02
@@ -176,11 +228,39 @@ describe('OpenAiTranscriptionProvider', () => {
         output: 'This is a test transcription.',
         cached: true,
         cost: 0, // Cost is 0 for cached responses
+        tokenUsage: {
+          prompt: 100,
+          completion: 20,
+          total: 120,
+          numRequests: 1,
+        },
         metadata: {
           task: 'transcribe',
           duration: 120,
           language: 'en',
           segments: 2,
+          usage: {
+            input_tokens: 100,
+            output_tokens: 20,
+            total_tokens: 120,
+            input_token_details: {
+              audio_tokens: 80,
+              text_tokens: 20,
+            },
+            output_token_details: {
+              text_tokens: 20,
+            },
+          },
+          usageBreakdown: {
+            audioInput: 80,
+            audioOutput: 0,
+            cachedInput: 0,
+            imageInput: 0,
+            textInput: 20,
+            textOutput: 20,
+            totalInput: 100,
+            totalOutput: 20,
+          },
           avgLogprob: -0.35,
           avgCompressionRatio: 1.15,
           avgNoSpeechProb: 0.015,
@@ -195,7 +275,7 @@ describe('OpenAiTranscriptionProvider', () => {
 
       const result = await provider.callApi('/path/to/audio.mp3');
 
-      expect(result.cost).toBe(0.006); // 2 minutes * $0.003/min
+      expect(result.cost).toBe(0.00027);
     });
 
     it('should calculate cost correctly for whisper-1', async () => {
@@ -255,17 +335,70 @@ describe('OpenAiTranscriptionProvider', () => {
         "[0.00s - 2.50s] Speaker 1: Hello, how are you?\n[2.50s - 5.00s] Speaker 2: I'm doing great, thanks!",
       );
       expect(result.cached).toBe(false);
-      expect(result.cost).toBeCloseTo(0.018, 5); // 3 minutes * $0.006/min
+      expect(result.cost).toBeCloseTo(0.000985, 10);
+      expect(result.tokenUsage).toEqual({
+        prompt: 140,
+        completion: 25,
+        total: 165,
+        numRequests: 1,
+      });
       expect(result.metadata).toEqual({
         task: 'transcribe',
         duration: 180,
         language: 'en',
         segments: 2,
+        usage: {
+          input_tokens: 140,
+          output_tokens: 25,
+          total_tokens: 165,
+          input_token_details: {
+            audio_tokens: 110,
+            text_tokens: 30,
+          },
+          output_token_details: {
+            text_tokens: 25,
+          },
+        },
+        usageBreakdown: {
+          audioInput: 110,
+          audioOutput: 0,
+          cachedInput: 0,
+          imageInput: 0,
+          textInput: 30,
+          textOutput: 25,
+          totalInput: 140,
+          totalOutput: 25,
+        },
         avgLogprob: -0.3, // Average of -0.25 and -0.35
         avgCompressionRatio: 1.275, // Average of 1.3 and 1.25
         avgNoSpeechProb: 0.0075, // Average of 0.005 and 0.01
         speakers: ['Speaker 1', 'Speaker 2'],
       });
+    });
+
+    it('should leave cost undefined when token usage is unavailable for non-legacy models', async () => {
+      const provider = new OpenAiTranscriptionProvider('gpt-4o-transcribe', {
+        config: { apiKey: 'test-key' },
+      });
+
+      vi.mocked(fetchWithCache).mockResolvedValue({
+        ...mockTranscriptionResponse,
+        data: {
+          ...mockTranscriptionResponse.data,
+          usage: undefined,
+        },
+      });
+
+      const result = await provider.callApi('/path/to/audio.mp3');
+
+      expect(result.cost).toBeUndefined();
+      expect(result.tokenUsage).toBeUndefined();
+      expect(result.metadata).toEqual(
+        expect.not.objectContaining({
+          usage: expect.anything(),
+          usageBreakdown: expect.anything(),
+        }),
+      );
     });
 
     it('should include num_speakers option for diarization', async () => {
@@ -609,7 +742,7 @@ describe('OpenAiTranscriptionProvider', () => {
 
       const result = await provider.callApi('/path/to/audio.mp3');
 
-      expect(result.cost).toBe(0);
+      expect(result.cost).toBeUndefined();
     });
 
     it('should handle missing duration in response', async () => {
@@ -629,7 +762,7 @@ describe('OpenAiTranscriptionProvider', () => {
 
       const result = await provider.callApi('/path/to/audio.mp3');
 
-      expect(result.cost).toBe(0);
+      expect(result.cost).toBeUndefined();
       expect(result.metadata?.duration).toBe(0);
     });
 

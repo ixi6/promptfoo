@@ -8,9 +8,14 @@ import {
   withGenAISpan,
 } from '../../tracing/genaiTracer';
 import { maybeLoadToolsFromExternalFile } from '../../util/index';
+import { convertPcm16ToWav } from '../audio/wav';
 import { FunctionCallbackHandler } from '../functionCallbackUtils';
 import { OpenAiGenericProvider } from '.';
-import { OPENAI_REALTIME_MODELS } from './util';
+import {
+  calculateOpenAICostFromUsage,
+  extractOpenAIUsageBreakdown,
+  OPENAI_REALTIME_MODELS,
+} from './util';
 
 import type { EnvOverrides } from '../../types/env';
 import type {
@@ -20,57 +25,6 @@ import type {
   TokenUsage,
 } from '../../types/index';
 import type { OpenAiCompletionOptions } from './types';
-
-/**
- * Convert PCM16 audio data to WAV format for browser playback
- * @param pcmData Raw PCM16 audio data buffer
- * @param sampleRate Sample rate (default 24000 for gpt-realtime)
- * @returns WAV format buffer
- */
-function convertPcm16ToWav(pcmData: Buffer, sampleRate = 24000): Buffer {
-  const numChannels = 1; // Mono
-  const bitsPerSample = 16;
-  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
-  const blockAlign = (numChannels * bitsPerSample) / 8;
-  const dataSize = pcmData.length;
-  const fileSize = 36 + dataSize;
-
-  const wavHeader = Buffer.alloc(44);
-  let offset = 0;
-
-  // RIFF header
-  wavHeader.write('RIFF', offset);
-  offset += 4;
-  wavHeader.writeUInt32LE(fileSize, offset);
-  offset += 4;
-  wavHeader.write('WAVE', offset);
-  offset += 4;
-
-  // fmt chunk
-  wavHeader.write('fmt ', offset);
-  offset += 4;
-  wavHeader.writeUInt32LE(16, offset);
-  offset += 4; // chunk size
-  wavHeader.writeUInt16LE(1, offset);
-  offset += 2; // audio format (PCM)
-  wavHeader.writeUInt16LE(numChannels, offset);
-  offset += 2;
-  wavHeader.writeUInt32LE(sampleRate, offset);
-  offset += 4;
-  wavHeader.writeUInt32LE(byteRate, offset);
-  offset += 4;
-  wavHeader.writeUInt16LE(blockAlign, offset);
-  offset += 2;
-  wavHeader.writeUInt16LE(bitsPerSample, offset);
-  offset += 2;
-
-  // data chunk
-  wavHeader.write('data', offset);
-  offset += 4;
-  wavHeader.writeUInt32LE(dataSize, offset);
-
-  return Buffer.concat([wavHeader, pcmData]);
-}
 
 export interface OpenAiRealtimeOptions extends OpenAiCompletionOptions {
   modalities?: string[];
@@ -116,6 +70,7 @@ interface WebSocketMessage {
 }
 
 interface RealtimeResponse {
+  cost?: number;
   output: string;
   tokenUsage: TokenUsage;
   cached: boolean;
@@ -154,6 +109,16 @@ function normalizeRealtimeTools(tools: any[]): any[] {
 
     return tool;
   });
+}
+
+function buildRealtimeTokenUsage(usage: any): TokenUsage {
+  return {
+    total: usage?.total_tokens || 0,
+    prompt: usage?.input_tokens || usage?.prompt_tokens || 0,
+    completion: usage?.output_tokens || usage?.completion_tokens || 0,
+    cached: 0,
+    numRequests: 1,
+  };
 }
 
 export class OpenAiRealtimeProvider extends OpenAiGenericProvider {
@@ -942,27 +907,26 @@ export class OpenAiRealtimeProvider extends OpenAiGenericProvider {
               logger.debug(
                 `AUDIO TRACE: audioFormat=${audioFormat}, responseText.length=${responseText.length}`,
               );
+              const usageBreakdown = extractOpenAIUsageBreakdown(usage);
 
               resolve({
                 output: responseText,
-                tokenUsage: {
-                  total: usage?.total_tokens || 0,
-                  prompt: usage?.input_tokens || 0,
-                  completion: usage?.output_tokens || 0,
-                  cached: 0,
-                  numRequests: 1,
-                },
+                cost: calculateOpenAICostFromUsage(this.modelName, this.config, usage),
+                tokenUsage: buildRealtimeTokenUsage(usage),
                 cached: false,
                 metadata: {
                   responseId,
                   messageId,
                   usage,
+                  ...(usageBreakdown ? { usageBreakdown } : {}),
                   // Include audio data in metadata if available
                   ...(hasAudioContent && {
                     audio: {
                       data: finalAudioData,
                       format: audioFormat,
                       transcript: responseText, // Use the text as transcript since we have it
+                      sampleRate: 24000,
+                      channels: 1,
                     },
                   }),
                 },
@@ -1178,6 +1142,7 @@ export class OpenAiRealtimeProvider extends OpenAiGenericProvider {
 
       return {
         output: finalOutput,
+        cost: result.cost,
         tokenUsage: result.tokenUsage,
         cached: result.cached,
         metadata,
@@ -1188,6 +1153,8 @@ export class OpenAiRealtimeProvider extends OpenAiGenericProvider {
             data: metadata.audio.data,
             format: metadata.audio.format,
             transcript: metadata.audio.transcript || result.output,
+            sampleRate: metadata.audio.sampleRate,
+            channels: metadata.audio.channels,
           },
         }),
       };
@@ -1478,22 +1445,19 @@ export class OpenAiRealtimeProvider extends OpenAiGenericProvider {
                   hasAudioContent = false;
                 }
               }
+              const usageBreakdown = extractOpenAIUsageBreakdown(usage);
 
               resolve({
                 output: responseText,
-                tokenUsage: {
-                  total: usage?.total_tokens || 0,
-                  prompt: usage?.input_tokens || usage?.prompt_tokens || 0,
-                  completion: usage?.output_tokens || usage?.completion_tokens || 0,
-                  cached: 0,
-                  numRequests: 1,
-                },
+                cost: calculateOpenAICostFromUsage(this.modelName, this.config, usage),
+                tokenUsage: buildRealtimeTokenUsage(usage),
                 cached: false,
                 metadata: {
                   responseId,
                   messageId,
                   sessionId,
                   usage,
+                  ...(usageBreakdown ? { usageBreakdown } : {}),
                   inputTranscript: input.inputTranscript,
                   outputTranscript: responseText,
                   eventCounts,
@@ -1503,6 +1467,8 @@ export class OpenAiRealtimeProvider extends OpenAiGenericProvider {
                       data: finalAudioData,
                       format: audioFormat,
                       transcript: responseText,
+                      sampleRate: 24000,
+                      channels: 1,
                     },
                   }),
                 },
@@ -1731,24 +1697,21 @@ export class OpenAiRealtimeProvider extends OpenAiGenericProvider {
       const hadAudio = Boolean(convertedAudio.data);
       const finalAudioData = convertedAudio.data || null;
       const finalAudioFormat = convertedAudio.format || this.currentAudioFormat;
+      const usageBreakdown = extractOpenAIUsageBreakdown(usage);
 
       this.resetAudioState();
 
       resolve({
         output: responseText,
-        tokenUsage: {
-          total: usage?.total_tokens || 0,
-          prompt: usage?.input_tokens || usage?.prompt_tokens || 0,
-          completion: usage?.output_tokens || usage?.completion_tokens || 0,
-          cached: 0,
-          numRequests: 1,
-        },
+        cost: calculateOpenAICostFromUsage(this.modelName, this.config, usage),
+        tokenUsage: buildRealtimeTokenUsage(usage),
         cached: false,
         metadata: {
           responseId,
           messageId,
           sessionId,
           usage,
+          ...(usageBreakdown ? { usageBreakdown } : {}),
           inputTranscript: input.inputTranscript,
           outputTranscript: responseText,
           eventCounts,
@@ -1758,6 +1721,8 @@ export class OpenAiRealtimeProvider extends OpenAiGenericProvider {
               data: finalAudioData,
               format: finalAudioFormat,
               transcript: responseText,
+              sampleRate: 24000,
+              channels: 1,
             },
           }),
         },
