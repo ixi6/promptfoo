@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runAssertion } from '../../src/assertions/index';
+import { runAssertion, runAssertions } from '../../src/assertions/index';
 import { getTraceStore } from '../../src/tracing/store';
 
 import type {
@@ -204,6 +204,35 @@ describe('trace assertions', () => {
       });
 
       expect(result.pass).toBe(true);
+    });
+
+    it('should reuse a preloaded missing trace instead of retrying once per assertion', async () => {
+      process.env.PROMPTFOO_TRACE_FETCH_MAX_ATTEMPTS = '2';
+      process.env.PROMPTFOO_TRACE_FETCH_RETRY_DELAY_MS = '0';
+      process.env.PROMPTFOO_TRACE_FETCH_STABLE_POLLS = '1';
+
+      mockTraceStore.getTrace.mockResolvedValue(null);
+
+      const result = await runAssertions({
+        test: {
+          ...mockTest,
+          assert: [
+            {
+              type: 'javascript',
+              value: 'context.trace === undefined',
+            },
+            {
+              type: 'javascript',
+              value: 'context.trace === undefined',
+            },
+          ],
+        },
+        providerResponse: mockProviderResponse,
+        traceId: 'non-existent-trace',
+      });
+
+      expect(result.pass).toBe(true);
+      expect(mockTraceStore.getTrace).toHaveBeenCalledTimes(2);
     });
 
     it('should calculate trace duration correctly', async () => {

@@ -324,6 +324,28 @@ describe('OpenAICodexSDKProvider', () => {
         });
       });
 
+      it('should ignore wildcard skill paths with shell metacharacters', async () => {
+        mockRun.mockResolvedValue(
+          createMockResponse('WILDCARD', undefined, [
+            {
+              id: 'item-1',
+              type: 'command_execution',
+              command: "/bin/zsh -lc 'cat .agents/skills/*/SKILL.md'",
+              aggregated_output: '',
+              exit_code: 0,
+              status: 'completed',
+            },
+          ]),
+        );
+
+        const provider = new OpenAICodexSDKProvider({
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+        const result = await provider.callApi('Read all skills');
+
+        expect(result.metadata).toBeUndefined();
+      });
+
       it('should not infer skillCalls from directory listings without a direct SKILL.md command read', async () => {
         mockRun.mockResolvedValue(
           createMockResponse('LISTED-FILES', undefined, [

@@ -497,6 +497,10 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     return Array.from(prefixes);
   }
 
+  private isValidCodexSkillName(name: string): boolean {
+    return /^[A-Za-z0-9._:-]+$/.test(name);
+  }
+
   private extractSkillPathCandidates(
     text: string,
     skillRootPrefixes: readonly string[] = [],
@@ -514,7 +518,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
       if (repoSkillIndex !== -1) {
         const repoSkillPath = normalizedPath.slice(repoSkillIndex);
         const repoMatch = repoSkillPath.match(/^\.agents\/skills\/([^/\s]+)\/SKILL\.md$/);
-        if (repoMatch) {
+        if (repoMatch && this.isValidCodexSkillName(repoMatch[1])) {
           matches.set(repoSkillPath, { name: repoMatch[1], path: repoSkillPath });
         }
         continue;
@@ -529,7 +533,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
 
       const relativeSkillPath = normalizedPath.slice(matchingRoot.length + 1);
       const customRootMatch = relativeSkillPath.match(/^skills\/([^/\s]+)\/SKILL\.md$/);
-      if (customRootMatch) {
+      if (customRootMatch && this.isValidCodexSkillName(customRootMatch[1])) {
         matches.set(normalizedPath, { name: customRootMatch[1], path: normalizedPath });
       }
     }

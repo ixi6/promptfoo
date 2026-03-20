@@ -395,7 +395,7 @@ export async function runAssertion({
   // Add trace data if traceId is available
   if (traceId && assertionUsesTrace(assertion)) {
     try {
-      const resolvedTraceData = traceData ?? (await loadTraceData(traceId));
+      const resolvedTraceData = traceData === undefined ? await loadTraceData(traceId) : traceData;
       if (resolvedTraceData) {
         context.trace = {
           traceId: resolvedTraceData.traceId,
