@@ -618,9 +618,24 @@ export class CrescendoProvider implements ApiProvider {
               };
             }
 
+            // Include full conversation history so the grader has context from
+            // all prior turns, not just the latest response.  This prevents
+            // false-positive assertions when earlier messages contain data that
+            // the rubric evaluator needs to know about (see #8174).
+            const conversationForGrading =
+              redteamHistory.length > 0
+                ? redteamHistory
+                    .map(
+                      (turn, i) =>
+                        `[Turn ${i + 1}]\nUser: ${turn.prompt}\nAssistant: ${turn.output}`,
+                    )
+                    .join('\n\n') +
+                  `\n\n[Turn ${redteamHistory.length + 1}]\nUser: ${attackPrompt}\nAssistant: ${lastResponse.output}`
+                : lastResponse.output;
+
             const { grade, rubric } = await grader.getResult(
               attackPrompt,
-              lastResponse.output,
+              conversationForGrading,
               test,
               provider,
               assertToUse && 'value' in assertToUse ? assertToUse.value : undefined,
