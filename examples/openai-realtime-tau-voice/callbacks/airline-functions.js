@@ -19,8 +19,18 @@ function canonicalizeUserId(value) {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
   const compact = normalized.replace(/_/g, '');
+  const compactLetters = compact.replace(/\d/g, '');
+  const compactDigits = compact.replace(/\D/g, '');
+  const looksLikeMiaLiVoiceId =
+    compactLetters.startsWith('mia') &&
+    compactLetters.length <= 8 &&
+    ['368', '668', '3668'].some((suffix) => compactDigits.endsWith(suffix));
 
-  if (/^mia_l(i|ai|ei|ee|y)_3668$/.test(normalized) || /^mial(i|ai|ei|ee|y)3668$/.test(compact)) {
+  if (
+    /^mia_l(i|ai|ei|ee|eigh|e|y)_3668$/.test(normalized) ||
+    /^mia(?:li|lai|lei|lee|leigh|le|ly)3668$/.test(compact) ||
+    looksLikeMiaLiVoiceId
+  ) {
     return 'mia_li_3668';
   }
 
