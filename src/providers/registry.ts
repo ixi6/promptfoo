@@ -135,6 +135,8 @@ interface ProviderFactory {
   ) => Promise<ApiProvider>;
 }
 
+const NESTED_ORCHESTRATION_PROVIDERS = new Set(['promptfoo:simulated-user', 'promptfoo:tau-voice']);
+
 function isResolvedApiProvider(value: unknown): value is ApiProvider {
   return (
     !!value &&
@@ -146,9 +148,23 @@ function isResolvedApiProvider(value: unknown): value is ApiProvider {
   );
 }
 
+function getNestedProviderId(providerRef: unknown): string | undefined {
+  if (typeof providerRef === 'string') {
+    return providerRef;
+  }
+
+  if (typeof providerRef === 'object' && providerRef !== null && 'id' in providerRef) {
+    const providerId = (providerRef as ProviderOptions).id;
+    return typeof providerId === 'string' ? providerId : undefined;
+  }
+
+  return undefined;
+}
+
 async function resolveNestedProvider(
   providerRef: unknown,
   context: LoadApiProviderContext,
+  ownerProviderId?: string,
 ): Promise<ApiProvider | undefined> {
   if (!providerRef) {
     return undefined;
@@ -159,6 +175,12 @@ async function resolveNestedProvider(
   }
 
   const { loadApiProvider } = await import('./index');
+  const nestedProviderId = getNestedProviderId(providerRef);
+  if (nestedProviderId && NESTED_ORCHESTRATION_PROVIDERS.has(nestedProviderId)) {
+    throw new Error(
+      `Provider ${nestedProviderId} cannot be used as a nested provider${ownerProviderId ? ` inside ${ownerProviderId}` : ''}. Configure a direct model provider instead.`,
+    );
+  }
 
   if (typeof providerRef === 'string') {
     return loadApiProvider(providerRef, {
@@ -1628,6 +1650,7 @@ export const providerMap: ProviderFactory[] = [
       const resolvedUserProvider = await resolveNestedProvider(
         providerOptions.config?.userProvider,
         context,
+        'promptfoo:simulated-user',
       );
 
       return new SimulatedUser({
@@ -1649,14 +1672,17 @@ export const providerMap: ProviderFactory[] = [
       const resolvedUserProvider = await resolveNestedProvider(
         providerOptions.config?.userProvider,
         context,
+        'promptfoo:tau-voice',
       );
       const resolvedTtsProvider = await resolveNestedProvider(
         providerOptions.config?.ttsProvider,
         context,
+        'promptfoo:tau-voice',
       );
       const resolvedTranscriptionProvider = await resolveNestedProvider(
         providerOptions.config?.transcriptionProvider,
         context,
+        'promptfoo:tau-voice',
       );
 
       return new TauVoiceProvider({

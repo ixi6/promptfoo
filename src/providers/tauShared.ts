@@ -1,4 +1,7 @@
 import dedent from 'dedent';
+import logger from '../logger';
+import { maybeLoadConfigFromExternalFile } from '../util/file';
+import { getNunjucksEngine } from '../util/templates';
 
 export type TauMessage = {
   role: 'user' | 'assistant' | 'system';
@@ -40,4 +43,118 @@ export function formatTauConversation(messages: TauMessage[]): string {
       }
     })
     .join('\n---\n');
+}
+
+export function isTauMessage(message: unknown): message is TauMessage {
+  return (
+    !!message &&
+    typeof message === 'object' &&
+    typeof (message as TauMessage).content === 'string' &&
+    ((message as TauMessage).role === 'user' ||
+      (message as TauMessage).role === 'assistant' ||
+      (message as TauMessage).role === 'system')
+  );
+}
+
+export function renderTauTemplate(
+  template: unknown,
+  vars: Record<string, any> | undefined,
+  logPrefix: string,
+): unknown {
+  if (typeof template !== 'string') {
+    return template;
+  }
+
+  try {
+    return getNunjucksEngine().renderString(template, vars || {});
+  } catch (error) {
+    logger.warn(
+      `[${logPrefix}] Failed to render template: ${template.substring(0, 100)}. Error: ${error instanceof Error ? error.message : error}`,
+    );
+    return template;
+  }
+}
+
+export function resolveTauInitialMessages(
+  initialMessages: TauMessage[] | string | undefined,
+  logPrefix: string,
+): TauMessage[] {
+  if (!initialMessages) {
+    return [];
+  }
+
+  if (Array.isArray(initialMessages)) {
+    return initialMessages;
+  }
+
+  const trimmed = initialMessages.trim();
+  if (trimmed === '') {
+    return [];
+  }
+
+  if (initialMessages.startsWith('file://')) {
+    try {
+      const resolved = maybeLoadConfigFromExternalFile(initialMessages);
+      if (Array.isArray(resolved)) {
+        return resolved;
+      }
+      logger.warn(
+        `[${logPrefix}] Expected array of messages from file, got: ${typeof resolved}. Value: ${JSON.stringify(resolved).substring(0, 200)}`,
+      );
+    } catch (error) {
+      logger.warn(
+        `[${logPrefix}] Failed to load initialMessages from file: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+    return [];
+  }
+
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(initialMessages);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+      logger.warn(
+        `[${logPrefix}] Parsed JSON but got ${typeof parsed} instead of array. Value: ${initialMessages.substring(0, 200)}`,
+      );
+    } catch (error) {
+      logger.warn(
+        `[${logPrefix}] Failed to parse initialMessages as JSON: ${error}. Value: ${initialMessages.substring(0, 200)}`,
+      );
+    }
+  }
+
+  logger.warn(
+    `[${logPrefix}] initialMessages is a string but could not be resolved: ${initialMessages.substring(0, 200)}`,
+  );
+  return [];
+}
+
+export function renderAndValidateTauMessages(
+  initialMessages: TauMessage[] | string | undefined,
+  vars: Record<string, any> | undefined,
+  logPrefix: string,
+): TauMessage[] {
+  const resolvedMessages = resolveTauInitialMessages(initialMessages, logPrefix);
+  const validMessages: TauMessage[] = [];
+
+  for (let index = 0; index < resolvedMessages.length; index++) {
+    const message = resolvedMessages[index];
+    const renderedMessage = {
+      role: renderTauTemplate(message.role, vars, logPrefix),
+      content: renderTauTemplate(message.content, vars, logPrefix),
+    };
+
+    if (isTauMessage(renderedMessage)) {
+      validMessages.push(renderedMessage);
+      continue;
+    }
+
+    logger.warn(
+      `[${logPrefix}] Invalid initial message at index ${index}, skipping. Expected {role: 'user'|'assistant'|'system', content: string}, got: ${JSON.stringify(renderedMessage).substring(0, 100)}`,
+    );
+  }
+
+  return validMessages;
 }

@@ -140,6 +140,39 @@ describe('Provider Registry', () => {
       expect(wsProvider.id()).toBe('ws://example.com');
     });
 
+    it('should reject orchestration providers as nested providers', async () => {
+      const simulatedUserFactory = providerMap.find((f) => f.test('promptfoo:simulated-user'));
+      const tauVoiceFactory = providerMap.find((f) => f.test('promptfoo:tau-voice'));
+
+      await expect(
+        simulatedUserFactory!.create(
+          'promptfoo:simulated-user',
+          {
+            config: {
+              userProvider: 'promptfoo:simulated-user',
+            },
+          },
+          mockContext,
+        ),
+      ).rejects.toThrow(
+        'Provider promptfoo:simulated-user cannot be used as a nested provider inside promptfoo:simulated-user',
+      );
+
+      await expect(
+        tauVoiceFactory!.create(
+          'promptfoo:tau-voice',
+          {
+            config: {
+              userProvider: 'promptfoo:tau-voice',
+            },
+          },
+          mockContext,
+        ),
+      ).rejects.toThrow(
+        'Provider promptfoo:tau-voice cannot be used as a nested provider inside promptfoo:tau-voice',
+      );
+    });
+
     it('should handle redteam providers correctly', async () => {
       const redteamPaths = [
         'promptfoo:redteam:best-of-n',

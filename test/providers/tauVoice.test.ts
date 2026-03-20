@@ -289,6 +289,56 @@ describe('TauVoiceProvider', () => {
     expect(result.output).toContain('User: My traveler ID is mia_li_3668.');
   });
 
+  it('should support stringified JSON initialMessages and per-test overrides', async () => {
+    const provider = new TauVoiceProvider({
+      config: {
+        maxTurns: 2,
+        initialMessages: JSON.stringify([
+          {
+            role: 'assistant',
+            content: 'Config greeting should be overridden.',
+          },
+        ]),
+        _resolvedUserProvider: userProvider,
+        _resolvedTtsProvider: ttsProvider,
+      },
+    });
+
+    const result = await provider.callApi('ignored', {
+      originalProvider,
+      vars: {
+        instructions: 'Answer after the seeded greeting.',
+        initialMessages: JSON.stringify([
+          {
+            role: 'assistant',
+            content: 'Hello {{ travelerName }}.',
+          },
+        ]),
+        travelerName: 'Mia',
+      },
+      prompt: {
+        raw: 'You are a voice airline assistant.',
+        display: 'You are a voice airline assistant.',
+        label: 'agent',
+      },
+      test: {
+        metadata: {},
+      },
+    });
+
+    const seededMessages = JSON.parse(vi.mocked(userProvider.callApi).mock.calls[0][0] as string);
+    expect(seededMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          content: 'Hello Mia.',
+        }),
+      ]),
+    );
+    expect(result.output).toContain('Assistant: Hello Mia.');
+    expect(result.output).not.toContain('Config greeting should be overridden.');
+  });
+
   it('should capture transcription verification and aggregate cost breakdowns', async () => {
     const transcriptionProvider: ApiProvider = {
       id: () => 'openai:transcription:gpt-4o-transcribe-diarize',

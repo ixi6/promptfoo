@@ -1,13 +1,17 @@
 import logger from '../logger';
 import { getSessionId } from '../redteam/util';
-import { maybeLoadConfigFromExternalFile } from '../util/file';
 import invariant from '../util/invariant';
 import { safeJsonStringify } from '../util/json';
 import { getNunjucksEngine } from '../util/templates';
 import { sleep } from '../util/time';
 import { accumulateResponseTokenUsage, createEmptyTokenUsage } from '../util/tokenUsageUtils';
 import { PromptfooSimulatedUserProvider } from './promptfoo';
-import { buildTauUserMessages, formatTauConversation, type TauMessage } from './tauShared';
+import {
+  buildTauUserMessages,
+  formatTauConversation,
+  renderAndValidateTauMessages,
+  type TauMessage,
+} from './tauShared';
 
 import type {
   ApiProvider,
@@ -65,117 +69,6 @@ export class SimulatedUser implements ApiProvider {
 
   id() {
     return this.identifier;
-  }
-
-  /**
-   * Validates that a message has the required structure.
-   */
-  private isValidMessage(msg: any): msg is Message {
-    return (
-      msg &&
-      typeof msg === 'object' &&
-      typeof msg.content === 'string' &&
-      (msg.role === 'user' || msg.role === 'assistant' || msg.role === 'system')
-    );
-  }
-
-  /**
-   * Safely renders a Nunjucks template string, falling back to the original value on error.
-   */
-  private renderTemplate(template: unknown, vars: Record<string, any> | undefined): unknown {
-    if (typeof template !== 'string') {
-      return template;
-    }
-
-    try {
-      return getNunjucksEngine().renderString(template, vars || {});
-    } catch (err) {
-      logger.warn(
-        `[SimulatedUser] Failed to render template: ${template.substring(0, 100)}. Error: ${err instanceof Error ? err.message : err}`,
-      );
-      return template;
-    }
-  }
-
-  /**
-   * Validates and filters an array of messages, logging warnings for invalid entries.
-   */
-  private validateMessages(messages: any[]): Message[] {
-    const validMessages: Message[] = [];
-    for (let i = 0; i < messages.length; i++) {
-      if (this.isValidMessage(messages[i])) {
-        validMessages.push(messages[i]);
-      } else {
-        logger.warn(
-          `[SimulatedUser] Invalid message at index ${i}, skipping. Expected {role: 'user'|'assistant'|'system', content: string}, got: ${JSON.stringify(messages[i]).substring(0, 100)}`,
-        );
-      }
-    }
-    return validMessages;
-  }
-
-  /**
-   * Resolves initial messages from either an array or a file:// path.
-   * Supports loading messages from JSON and YAML files.
-   */
-  private resolveInitialMessages(initialMessages: Message[] | string | undefined): Message[] {
-    if (!initialMessages) {
-      return [];
-    }
-
-    // If it's already an array, return it (validation happens after templating)
-    if (Array.isArray(initialMessages)) {
-      return initialMessages;
-    }
-
-    // If it's a string, handle different cases
-    if (typeof initialMessages === 'string') {
-      if (initialMessages.trim() === '') {
-        return [];
-      }
-
-      // Case 1: file:// reference (JSON/YAML)
-      if (initialMessages.startsWith('file://')) {
-        try {
-          const resolved = maybeLoadConfigFromExternalFile(initialMessages);
-          if (Array.isArray(resolved)) {
-            return resolved;
-          }
-          logger.warn(
-            `[SimulatedUser] Expected array of messages from file, got: ${typeof resolved}. Value: ${JSON.stringify(resolved).substring(0, 200)}`,
-          );
-        } catch (error) {
-          logger.warn(
-            `[SimulatedUser] Failed to load initialMessages from file: ${error instanceof Error ? error.message : error}`,
-          );
-        }
-        return [];
-      }
-
-      // Case 2: Stringified JSON array (happens when file was already loaded but then stringified for storage/transport)
-      if (initialMessages.trim().startsWith('[')) {
-        try {
-          const parsed = JSON.parse(initialMessages);
-          if (Array.isArray(parsed)) {
-            return parsed;
-          }
-          logger.warn(
-            `[SimulatedUser] Parsed JSON but got ${typeof parsed} instead of array. Value: ${initialMessages.substring(0, 200)}`,
-          );
-        } catch (error) {
-          logger.warn(
-            `[SimulatedUser] Failed to parse initialMessages as JSON: ${error}. Value: ${initialMessages.substring(0, 200)}`,
-          );
-        }
-      }
-
-      logger.warn(
-        `[SimulatedUser] initialMessages is a string but could not be resolved: ${initialMessages.substring(0, 200)}`,
-      );
-      return [];
-    }
-
-    return [];
   }
 
   private async sendMessageToRemoteUser(
@@ -324,16 +217,11 @@ export class SimulatedUser implements ApiProvider {
     // vars.initialMessages takes precedence over config.initialMessages
     // Both can be arrays or file:// paths
     const varsInitialMessages = context?.vars?.initialMessages as Message[] | string | undefined;
-    const resolvedMessages = this.resolveInitialMessages(
+    const messages = renderAndValidateTauMessages(
       varsInitialMessages || this.configInitialMessages,
+      context?.vars,
+      'SimulatedUser',
     );
-
-    // Template both role and content fields with context variables, then validate
-    const templatedMessages = resolvedMessages.map((msg) => ({
-      role: this.renderTemplate(msg.role, context?.vars),
-      content: this.renderTemplate(msg.content, context?.vars),
-    }));
-    const messages: Message[] = this.validateMessages(templatedMessages);
 
     if (messages.length > 0) {
       logger.debug(`[SimulatedUser] Starting with ${messages.length} initial messages`);

@@ -4,7 +4,6 @@ import path from 'path';
 
 import logger from '../logger';
 import { type GenAISpanContext, type GenAISpanResult, withGenAISpan } from '../tracing/genaiTracer';
-import { maybeLoadConfigFromExternalFile } from '../util/file';
 import invariant from '../util/invariant';
 import { safeJsonStringify } from '../util/json';
 import { getNunjucksEngine } from '../util/templates';
@@ -18,7 +17,12 @@ import {
   parseWavToPcm16,
 } from './audio/wav';
 import { OpenAiSpeechProvider } from './openai/speech';
-import { buildTauUserMessages, formatTauConversation, type TauMessage } from './tauShared';
+import {
+  buildTauUserMessages,
+  formatTauConversation,
+  renderAndValidateTauMessages,
+  type TauMessage,
+} from './tauShared';
 
 import type {
   ApiProvider,
@@ -161,81 +165,13 @@ export class TauVoiceProvider implements ApiProvider {
     };
   }
 
-  private isValidMessage(message: unknown): message is TauMessage {
-    return (
-      !!message &&
-      typeof message === 'object' &&
-      typeof (message as TauMessage).content === 'string' &&
-      ((message as TauMessage).role === 'user' ||
-        (message as TauMessage).role === 'assistant' ||
-        (message as TauMessage).role === 'system')
-    );
-  }
-
-  private renderTemplate(template: unknown, vars: Record<string, any> | undefined): unknown {
-    if (typeof template !== 'string') {
-      return template;
-    }
-
-    try {
-      return getNunjucksEngine().renderString(template, vars || {});
-    } catch (error) {
-      logger.warn(
-        `[TauVoice] Failed to render template: ${template.substring(0, 100)}. Error: ${error instanceof Error ? error.message : error}`,
-      );
-      return template;
-    }
-  }
-
-  private resolveInitialMessages(initialMessages: TauMessage[] | string | undefined): TauMessage[] {
-    if (!initialMessages) {
-      return [];
-    }
-
-    if (Array.isArray(initialMessages)) {
-      return initialMessages;
-    }
-
-    if (!initialMessages.startsWith('file://')) {
-      logger.warn(
-        `[TauVoice] initialMessages is a string but could not be resolved: ${initialMessages.substring(0, 200)}`,
-      );
-      return [];
-    }
-
-    try {
-      const resolved = maybeLoadConfigFromExternalFile(initialMessages);
-      if (Array.isArray(resolved)) {
-        return resolved;
-      }
-      logger.warn(
-        `[TauVoice] Expected array of messages from file, got: ${typeof resolved}. Value: ${JSON.stringify(resolved).substring(0, 200)}`,
-      );
-    } catch (error) {
-      logger.warn(
-        `[TauVoice] Failed to load initialMessages from file: ${error instanceof Error ? error.message : error}`,
-      );
-    }
-
-    return [];
-  }
-
   private getRenderedInitialMessages(vars: Record<string, any> | undefined): TauMessage[] {
-    return this.resolveInitialMessages(this.configInitialMessages)
-      .map((message) => ({
-        role: this.renderTemplate(message.role, vars),
-        content: this.renderTemplate(message.content, vars),
-      }))
-      .filter((message): message is TauMessage => {
-        if (this.isValidMessage(message)) {
-          return true;
-        }
-
-        logger.warn(
-          `[TauVoice] Invalid initial message, skipping: ${JSON.stringify(message).substring(0, 100)}`,
-        );
-        return false;
-      });
+    const varsInitialMessages = vars?.initialMessages as TauMessage[] | string | undefined;
+    return renderAndValidateTauMessages(
+      varsInitialMessages || this.configInitialMessages,
+      vars,
+      'TauVoice',
+    );
   }
 
   private buildTargetContext(
