@@ -1577,16 +1577,16 @@ npx promptfoo@latest init --example openai-audio
 
 ### Audio transcription
 
-OpenAI provides dedicated transcription models for converting speech to text. These models charge per minute of audio rather than per token.
+OpenAI provides dedicated transcription models for converting speech to text. `gpt-4o-*transcribe` models return token usage, so promptfoo calculates cost from the reported text and audio token breakdown. `whisper-1` remains a legacy per-minute model.
 
 **Available transcription models:**
 
-| Model                       | Description                          | Cost per minute |
-| --------------------------- | ------------------------------------ | --------------- |
-| `whisper-1`                 | Original Whisper transcription model | $0.006          |
-| `gpt-4o-transcribe`         | GPT-4o optimized for transcription   | $0.006          |
-| `gpt-4o-mini-transcribe`    | Faster, more cost-effective option   | $0.003          |
-| `gpt-4o-transcribe-diarize` | Identifies different speakers        | $0.006          |
+| Model                       | Description                                | Pricing basis                 |
+| --------------------------- | ------------------------------------------ | ----------------------------- |
+| `whisper-1`                 | Original Whisper transcription model       | $0.006 per minute             |
+| `gpt-4o-transcribe`         | GPT-4o optimized for transcription         | Usage-based text/audio tokens |
+| `gpt-4o-mini-transcribe`    | Faster, more cost-effective transcription  | Usage-based text/audio tokens |
+| `gpt-4o-transcribe-diarize` | Identifies different speakers in one audio | Usage-based text/audio tokens |
 
 To use transcription models, specify the provider format `openai:transcription:<model name>`:
 
@@ -1624,6 +1624,7 @@ tests:
 | `prompt`                  | Context to improve transcription accuracy | Any text string        |
 | `temperature`             | Controls randomness (0-1)                 | Number between 0 and 1 |
 | `timestamp_granularities` | Get word or segment-level timestamps      | ['word', 'segment']    |
+| `chunking_strategy`       | Chunking mode for diarization models      | `auto` or object       |
 | `num_speakers`            | Expected number of speakers (diarization) | Number                 |
 | `speaker_labels`          | Names for speakers (diarization)          | Array of strings       |
 
@@ -1675,13 +1676,15 @@ providers:
 
 The response includes base64-encoded audio in both `audio` and `metadata.audio`, with a normalized transcript matching the text input.
 
+For `gpt-4o-mini-tts`, promptfoo also stores normalized audio metadata such as `sampleRate`, `channels`, and `duration` when it can be derived from the returned audio. The displayed cost is an estimate because the `/v1/audio/speech` endpoint does not currently return usage tokens.
+
 ## Realtime API Models
 
 The Realtime API allows for real-time communication with GPT-4o class models using WebSockets, supporting both text and audio inputs/outputs with streaming responses.
 
 ### Supported Realtime Models
 
-- `gpt-realtime` - Latest realtime model ($4/$16 per 1M text tokens, $40/$80 per 1M audio tokens)
+- `gpt-realtime` - Latest realtime model ($4/$16 per 1M text tokens, $32/$64 per 1M audio tokens)
 - `gpt-realtime-mini` - Cost-efficient realtime model ($0.60/$2.40 per 1M text tokens, $10/$20 per 1M audio tokens)
 - `gpt-4o-realtime-preview-2024-12-17`
 - `gpt-4o-mini-realtime-preview-2024-12-17`

@@ -13,9 +13,11 @@ This example demonstrates a local, Tau-style voice eval loop built entirely insi
 - `initialMessages` seeds an opening assistant greeting so the simulator starts from the user side
 - `openai:speech:gpt-4o-mini-tts` synthesizes user audio
 - `openai:realtime:gpt-realtime` answers as the voice agent
+- `openai:transcription:gpt-4o-transcribe-diarize` retranscribes saved audio for per-turn verification and conversation-level diarization
 - `turn_detection: null` keeps the target in half-duplex mode for synthesized eval turns
 - `llm-rubric` grades the final transcript
 - trajectory assertions verify the tool path from the trace using stable, ASR-tolerant fields
+- a `javascript` assertion verifies the resolved traveler profile and flight search output directly from `metadata.voiceTurns`
 
 ## Setup
 
@@ -44,7 +46,8 @@ The example enables Promptfoo tracing, so you can inspect the voice run, tool sp
 - Local simulated-user generation with `openai:chat:gpt-4.1-mini`
 - User text-to-speech with `openai:speech:gpt-4o-mini-tts`
 - Realtime audio turns with `openai:realtime:gpt-realtime`
-- Per-turn transcript and audio metadata in `metadata.voiceTurns`
+- Per-turn transcript, audio, verification, and cost metadata in `metadata.voiceTurns`
+- Conversation-level diarized transcription in `metadata.conversationTranscription`
 - `llm-rubric`, `trajectory:tool-used`, `trajectory:tool-args-match`, and `trajectory:tool-sequence`
 
 ## Files

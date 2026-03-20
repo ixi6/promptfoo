@@ -52,6 +52,11 @@ defaultTest:
         config:
           voice: alloy
           format: pcm
+      transcriptionProvider:
+        id: openai:transcription:gpt-4o-transcribe-diarize
+        config:
+          chunking_strategy: auto
+      transcriptionScope: assistant-turns-and-conversation
 
 tests:
   - description: Cheapest direct morning Seattle option
@@ -69,12 +74,17 @@ tests:
         provider: openai:chat:gpt-4.1-mini
         value: |
           Did the voice assistant handle the travel request well?
-          Pass if: The assistant loaded the traveler profile, searched flights, recommended a direct morning economy option when available, and explained the baggage cost implications for 3 checked bags using the profile benefits and flight baggage rules.
-          Fail if: It skipped the profile or flight search, recommended a clearly wrong itinerary, or ignored the baggage cost implications.
+          Pass if: The assistant identifies Mia Li as a gold traveler, searches flights, recommends the Alaska Airlines AS301 direct morning economy option, and explains that two bags are free so only the third bag costs $150 for a total of $475.
+          Fail if: It skips the profile or flight search, resolves the traveler incorrectly, recommends a clearly wrong itinerary, or gives baggage pricing inconsistent with a gold traveler who has two free checked bags.
       - type: trajectory:tool-used
         value: get_user_profile
       - type: trajectory:tool-used
         value: search_flights
+      - type: trajectory:step-count
+        value:
+          type: tool
+          min: 2
+          max: 2
       - type: trajectory:tool-args-match
         value:
           name: search_flights
@@ -86,6 +96,49 @@ tests:
           steps:
             - get_user_profile
             - search_flights
+      - type: javascript
+        value: |
+          const voiceTurns = context.providerResponse?.metadata?.voiceTurns || [];
+          const functionCalls = voiceTurns.flatMap((turn) => turn.assistant?.functionCalls || []);
+          const parseOutput = (call) => {
+            if (!call?.output) {
+              return undefined;
+            }
+
+            try {
+              return JSON.parse(call.output);
+            } catch {
+              return undefined;
+            }
+          };
+
+          const profileLookup = parseOutput(
+            functionCalls.find((call) => call.name === 'get_user_profile'),
+          );
+          const flightSearch = parseOutput(
+            functionCalls.find((call) => call.name === 'search_flights'),
+          );
+
+          return Boolean(
+            profileLookup?.resolution?.resolved_user_id === 'mia_li_3668' &&
+              profileLookup?.data?.membership_tier === 'gold' &&
+              profileLookup?.data?.benefits?.free_checked_bags === 2 &&
+              flightSearch?.data?.flights?.some(
+                (flight) =>
+                  flight.flight_number === 'AS301' &&
+                  flight.stops === 0 &&
+                  flight.departure_time === '08:30',
+              ),
+          );
+      - type: trajectory:goal-success
+        provider: openai:chat:gpt-4.1-mini
+        value:
+          goal: >-
+            The assistant should resolve the traveler as Mia Li with gold status,
+            search direct morning New York to Seattle one-way economy flights for
+            May 20, recommend Alaska Airlines flight AS301 as the best direct
+            morning option, and explain that Mia's first two checked bags are free
+            so only the third bag costs $150 for a total of $475.
 
 tracing:
   enabled: true

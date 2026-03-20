@@ -74,3 +74,13 @@ Build a local, eval-focused voice simulation harness in promptfoo that is inspir
 - Ran Biome checks on the touched provider, test, docs, and example files.
 - Ran `SKIP_OG_GENERATION=true npm run build` in `site/` successfully after the provider doc updates.
 - Ran a live end-to-end eval with `npm run local -- eval -c examples/openai-realtime-tau-voice/promptfooconfig.yaml --env-file ~/code/promptfoo/.env --no-cache --max-concurrency 1 -o /tmp/openai-realtime-tau-voice.json`, and the example passed against real OpenAI APIs.
+- Hardened the Tau Voice artifact model with per-turn and conversation-level retranscription, diarized conversation transcripts, and explicit `costBreakdown` metadata.
+- Added shared WAV helpers and propagated sample rate, channel count, duration, usage breakdowns, and estimated TTS cost metadata through the OpenAI speech and realtime providers.
+- Updated OpenAI transcription cost handling to use returned token usage for `gpt-4o-*transcribe`, while keeping `whisper-1` on legacy per-minute fallback pricing.
+- Tightened the airline example with ASR-tolerant profile resolution, morning-flight fixture data, a JavaScript assertion over tool outputs, and a tool-only `trajectory:step-count` check.
+- Fixed diarization requests by sending `chunking_strategy: auto` for diarized transcription runs.
+- Improved assistant-turn transcript verification from strict string equality to similarity-based matching so voice-normalized numbers and timestamps do not produce false negatives.
+- Re-ran focused Vitest coverage for realtime, speech, transcription, tau voice, simulated user, and shared Tau prompt helpers after the hardening changes.
+- Re-ran `npm run tsc -- --pretty false`, Biome checks, and the docs site build successfully after the hardening changes.
+- Re-ran the live end-to-end eval with `npm run local -- eval -c examples/openai-realtime-tau-voice/promptfooconfig.yaml --env-file ~/code/promptfoo/.env --no-cache --max-concurrency 1 -o /tmp/openai-realtime-tau-voice-qa.json`, confirmed the hardened example passed, and inspected the saved WAV plus retranscription artifacts.
+- Verified the missing-key failure path still exits fast with `Missing OPENAI_API_KEY (openai:realtime:gpt-realtime)`.

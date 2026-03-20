@@ -44,6 +44,9 @@ defaultTest:
         config:
           voice: alloy
           format: pcm
+      transcriptionProvider:
+        id: openai:transcription:gpt-4o-transcribe-diarize
+      transcriptionScope: assistant-turns-and-conversation
 ```
 
 ## How it works
@@ -60,15 +63,17 @@ The loop stops when the simulated user emits `###STOP###`, the target ends the c
 
 ## Configuration Options
 
-| Option            | Type                | Description                                                                                                        |
-| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `userProvider`    | string or object    | Required. Local provider used to generate the next simulated user turn.                                            |
-| `ttsProvider`     | string or object    | Optional. Text-to-speech provider for user audio. Defaults to OpenAI speech.                                       |
-| `instructions`    | string              | Nunjucks template for the simulated-user objective. Defaults to `{{instructions}}`.                                |
-| `maxTurns`        | number              | Maximum number of simulated turns. Defaults to 10.                                                                 |
-| `initialMessages` | Message[] or string | Optional. Seed conversation state before the first simulated user turn. Supports inline arrays or `file://` paths. |
-| `voice`           | string              | Default voice for the built-in OpenAI TTS fallback.                                                                |
-| `ttsFormat`       | string              | Default audio format for the built-in OpenAI TTS fallback.                                                         |
+| Option                  | Type                | Description                                                                                                        |
+| ----------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `userProvider`          | string or object    | Required. Local provider used to generate the next simulated user turn.                                            |
+| `ttsProvider`           | string or object    | Optional. Text-to-speech provider for user audio. Defaults to OpenAI speech.                                       |
+| `transcriptionProvider` | string or object    | Optional. Provider used to retranscribe saved audio for verification or diarization.                               |
+| `transcriptionScope`    | string              | Optional. `assistant-turns`, `conversation`, or `assistant-turns-and-conversation`. Defaults to `assistant-turns`. |
+| `instructions`          | string              | Nunjucks template for the simulated-user objective. Defaults to `{{instructions}}`.                                |
+| `maxTurns`              | number              | Maximum number of simulated turns. Defaults to 10.                                                                 |
+| `initialMessages`       | Message[] or string | Optional. Seed conversation state before the first simulated user turn. Supports inline arrays or `file://` paths. |
+| `voice`                 | string              | Default voice for the built-in OpenAI TTS fallback.                                                                |
+| `ttsFormat`             | string              | Default audio format for the built-in OpenAI TTS fallback.                                                         |
 
 ## Output and Metadata
 
@@ -78,7 +83,9 @@ It also stores normalized voice artifacts in metadata:
 
 - `metadata.transcript` for the full conversation transcript
 - `metadata.messages` for text-only chat history
-- `metadata.voiceTurns` for per-turn audio, transcripts, tool calls, event counts, session IDs, and latencies
+- `metadata.voiceTurns` for per-turn audio, transcripts, tool calls, verification transcripts, usage breakdowns, event counts, session IDs, and latencies
+- `metadata.conversationTranscription` for an optional diarized or post-run transcript of the stitched user+assistant audio
+- `metadata.costBreakdown` for separate user simulation, TTS, target, and transcription costs
 - `metadata.stopReason` for the harness stop condition
 - `metadata.objective` and `metadata.targetPrompt` for trace-aware grading context
 
@@ -96,6 +103,8 @@ With tracing enabled, the Tau Voice span becomes the parent for the nested simul
 For local Tau-style voice evals, prefer `turn_detection: null` on the realtime target so promptfoo stays in explicit half-duplex control of each synthesized audio turn. Enable `tracing.otlp` only if your own external callbacks or services need to export spans back into promptfoo.
 
 For voice-specific assertions, prefer `trajectory:tool-used`, `trajectory:tool-sequence`, and stable argument checks over exact spoken identifiers. Audio transcription and model normalization can slightly alter IDs, account numbers, or spelling even when the tool path is otherwise correct.
+
+If you need stricter Tau-style checks, use a `javascript` assertion to inspect `context.providerResponse.metadata.voiceTurns`. That lets you verify tool outputs such as resolved traveler IDs, baggage benefits, or post-run retranscription results directly from the saved eval artifact.
 
 ## Example
 
