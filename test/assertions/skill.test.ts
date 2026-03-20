@@ -108,6 +108,18 @@ describe('skill-used assertion', () => {
     expect(result.reason).toContain('Forbidden skill(s) were used: token-skill');
   });
 
+  it('treats not-skill-used object assertions with no count bounds as forbidding any match', async () => {
+    const result = await runSkillAssertion({
+      type: 'not-skill-used',
+      value: {
+        pattern: 'token-*',
+      },
+    });
+
+    expect(result.pass).toBe(false);
+    expect(result.reason).toContain('Forbidden skill "token-*" was used 1 time(s)');
+  });
+
   it('fails not-skill-used object assertions with max: 0 when a matching skill is present', async () => {
     const result = await runSkillAssertion({
       type: 'not-skill-used',
