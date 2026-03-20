@@ -294,6 +294,66 @@ describe('OpenAICodexSDKProvider', () => {
         });
       });
 
+      it('should infer skillCalls from quoted skill paths', async () => {
+        mockRun.mockResolvedValue(
+          createMockResponse('CERULEAN-FALCON-SKILL', undefined, [
+            {
+              id: 'item-1',
+              type: 'command_execution',
+              command: `/bin/zsh -lc "cat '.agents/skills/token-skill/SKILL.md'"`,
+              aggregated_output: '',
+              exit_code: 0,
+              status: 'completed',
+            },
+          ]),
+        );
+
+        const provider = new OpenAICodexSDKProvider({
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+        const result = await provider.callApi('Use the token-skill skill');
+
+        expect(result.metadata).toEqual({
+          skillCalls: [
+            {
+              name: 'token-skill',
+              path: '.agents/skills/token-skill/SKILL.md',
+              source: 'heuristic',
+            },
+          ],
+        });
+      });
+
+      it('should infer skillCalls from files inside a known skill directory', async () => {
+        mockRun.mockResolvedValue(
+          createMockResponse('CERULEAN-FALCON-SKILL', undefined, [
+            {
+              id: 'item-1',
+              type: 'command_execution',
+              command: "/bin/zsh -lc 'ls .agents/skills/token-skill'",
+              aggregated_output: 'agents/openai.yaml\nreferences/policy.md\n',
+              exit_code: 0,
+              status: 'completed',
+            },
+          ]),
+        );
+
+        const provider = new OpenAICodexSDKProvider({
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+        const result = await provider.callApi('Inspect the token-skill directory');
+
+        expect(result.metadata).toEqual({
+          skillCalls: [
+            {
+              name: 'token-skill',
+              path: '.agents/skills/token-skill/SKILL.md',
+              source: 'heuristic',
+            },
+          ],
+        });
+      });
+
       it('should omit skillCalls when no skill files are read', async () => {
         mockRun.mockResolvedValue(
           createMockResponse('4', undefined, [
@@ -1032,26 +1092,38 @@ describe('OpenAICodexSDKProvider', () => {
 
       it('should use custom cli_env', async () => {
         mockRun.mockResolvedValue(createMockResponse('Response'));
+        process.env.PROMPTFOO_TEST_EXISTING = 'present';
 
-        const provider = new OpenAICodexSDKProvider({
-          config: {
-            cli_env: {
-              CUSTOM_VAR: 'custom-value',
+        try {
+          const provider = new OpenAICodexSDKProvider({
+            config: {
+              cli_env: {
+                CUSTOM_VAR: 'custom-value',
+              },
             },
-          },
-          env: { OPENAI_API_KEY: 'test-api-key' },
-        });
+            env: { OPENAI_API_KEY: 'test-api-key' },
+          });
 
-        await provider.callApi('Test prompt');
+          await provider.callApi('Test prompt');
 
-        expect(MockCodex).toHaveBeenCalledWith(
-          expect.objectContaining({
-            env: expect.objectContaining({
-              CUSTOM_VAR: 'custom-value',
-              OPENAI_API_KEY: 'test-api-key',
+          expect(MockCodex).toHaveBeenCalledWith(
+            expect.objectContaining({
+              env: expect.objectContaining({
+                CUSTOM_VAR: 'custom-value',
+                OPENAI_API_KEY: 'test-api-key',
+              }),
             }),
-          }),
-        );
+          );
+          expect(MockCodex).toHaveBeenCalledWith(
+            expect.objectContaining({
+              env: expect.not.objectContaining({
+                PROMPTFOO_TEST_EXISTING: 'present',
+              }),
+            }),
+          );
+        } finally {
+          delete process.env.PROMPTFOO_TEST_EXISTING;
+        }
       });
 
       it('should handle codex_path_override', async () => {
@@ -1179,7 +1251,7 @@ describe('OpenAICodexSDKProvider', () => {
         );
       });
 
-      it('should merge cli_env with inherited process env', async () => {
+      it('should merge cli_env with inherited process env when inherit_process_env is enabled', async () => {
         mockRun.mockResolvedValue(createMockResponse('Response'));
 
         process.env.PROMPTFOO_TEST_EXISTING = 'present';
@@ -1187,6 +1259,7 @@ describe('OpenAICodexSDKProvider', () => {
           const provider = new OpenAICodexSDKProvider({
             config: {
               cli_env: { CODEX_HOME: '/tmp/codex-home' },
+              inherit_process_env: true,
             },
             env: { OPENAI_API_KEY: 'test-api-key' },
           });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runAssertion } from '../../src/assertions/index';
 import { getTraceStore } from '../../src/tracing/store';
 
@@ -60,6 +60,7 @@ describe('trace assertions', () => {
   };
 
   beforeEach(() => {
+    mockTraceStore.getTrace.mockReset();
     vi.clearAllMocks();
     delete process.env.PROMPTFOO_TRACE_FETCH_MAX_ATTEMPTS;
     delete process.env.PROMPTFOO_TRACE_FETCH_RETRY_DELAY_MS;
@@ -67,6 +68,10 @@ describe('trace assertions', () => {
     vi.mocked(getTraceStore).mockReturnValue(
       mockTraceStore as unknown as ReturnType<typeof getTraceStore>,
     );
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
   });
 
   const mockTest: AtomicTestCase = {

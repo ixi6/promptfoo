@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { evaluate } from '../../src/evaluator';
 import * as evaluatorTracing from '../../src/tracing/evaluatorTracing';
 import { getTraceStore } from '../../src/tracing/store';
@@ -57,8 +57,12 @@ describe('evaluator trace integration', () => {
   } as unknown as Eval;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     (getTraceStore as Mock).mockReturnValue(mockTraceStore);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('should pass traceId through to assertions when tracing is enabled', async () => {

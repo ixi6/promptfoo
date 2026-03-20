@@ -149,6 +149,7 @@ Skipping the Git check removes a safety guard. Use with caution and consider ver
 | `thread_pool_size`       | number   | Max concurrent threads (when persist_threads)  | 1                     |
 | `output_schema`          | object   | JSON schema for structured responses           | None                  |
 | `cli_env`                | object   | Custom environment variables for Codex CLI     | Inherits from process |
+| `inherit_process_env`    | boolean  | Merge process env when `cli_env` is set        | false                 |
 | `enable_streaming`       | boolean  | Enable streaming events                        | false                 |
 | `deep_tracing`           | boolean  | Enable OpenTelemetry tracing of CLI internals  | false                 |
 
@@ -497,7 +498,18 @@ providers:
 ```
 
 By default, the provider inherits all environment variables from the Node.js process.
-Values in `cli_env` are merged on top of the inherited environment, so you can set `CODEX_HOME` or similar variables without re-declaring API keys.
+If you set `cli_env`, promptfoo passes only those custom variables plus the provider's resolved API key by default. This keeps the Codex runtime isolated from unrelated process secrets.
+
+To merge the process environment anyway, set `inherit_process_env: true`:
+
+```yaml
+providers:
+  - id: openai:codex-sdk
+    config:
+      inherit_process_env: true
+      cli_env:
+        CODEX_HOME: ./sample-codex-home
+```
 
 ## Skills
 

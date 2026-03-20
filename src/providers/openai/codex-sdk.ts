@@ -180,9 +180,16 @@ export interface OpenAICodexSDKConfig {
 
   /**
    * Environment variables to pass to Codex CLI
-   * By default inherits Node.js process.env
+   * When unset, Codex inherits Node.js process.env.
+   * When set, only these variables are passed unless inherit_process_env is true.
    */
   cli_env?: Record<string, string>;
+
+  /**
+   * Merge process.env into the Codex CLI environment even when cli_env is set.
+   * Defaults to false when cli_env is provided, preserving env isolation.
+   */
+  inherit_process_env?: boolean;
 
   /**
    * Enable streaming events (default: false for simplicity)
@@ -394,8 +401,9 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     config: OpenAICodexSDKConfig,
     traceparent?: string,
   ): Record<string, string> {
+    const inheritProcessEnv = config.cli_env === undefined || config.inherit_process_env === true;
     const env: Record<string, string> = {
-      ...(process.env as Record<string, string>),
+      ...(inheritProcessEnv ? (process.env as Record<string, string>) : {}),
       ...(config.cli_env ?? {}),
     };
 
@@ -478,6 +486,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     };
 
     addPrefix(env.CODEX_HOME);
+    // Codex's system skill root is documented as /etc/codex/skills.
     addPrefix('/etc/codex');
 
     const homeDir = env.HOME || process.env.HOME;
@@ -495,7 +504,7 @@ export class OpenAICodexSDKProvider implements ApiProvider {
     const matches = new Map<string, { name: string; path: string }>();
 
     for (const rawToken of text.split(/\s+/)) {
-      const token = rawToken.replace(/^[`"'([{]+|[`"',;:)\]}]+$/g, '').trim();
+      const token = rawToken.replace(/^[`"'([{<]+|[`"',;:)\]}>]+$/g, '').trim();
       if (!token) {
         continue;
       }
@@ -504,9 +513,10 @@ export class OpenAICodexSDKProvider implements ApiProvider {
       const repoSkillIndex = normalizedPath.indexOf('.agents/skills/');
       if (repoSkillIndex !== -1) {
         const repoSkillPath = normalizedPath.slice(repoSkillIndex);
-        const repoMatch = repoSkillPath.match(/^\.agents\/skills\/([^/]+)\/SKILL\.md$/);
+        const repoMatch = repoSkillPath.match(/^\.agents\/skills\/([^/\s]+)(?:\/.*)?$/);
         if (repoMatch) {
-          matches.set(repoSkillPath, { name: repoMatch[1], path: repoSkillPath });
+          const skillPath = `.agents/skills/${repoMatch[1]}/SKILL.md`;
+          matches.set(skillPath, { name: repoMatch[1], path: skillPath });
         }
         continue;
       }
@@ -519,9 +529,10 @@ export class OpenAICodexSDKProvider implements ApiProvider {
       }
 
       const relativeSkillPath = normalizedPath.slice(matchingRoot.length + 1);
-      const customRootMatch = relativeSkillPath.match(/^skills\/([^/]+)\/SKILL\.md$/);
+      const customRootMatch = relativeSkillPath.match(/^skills\/([^/\s]+)(?:\/.*)?$/);
       if (customRootMatch) {
-        matches.set(normalizedPath, { name: customRootMatch[1], path: normalizedPath });
+        const skillPath = `${matchingRoot}/skills/${customRootMatch[1]}/SKILL.md`;
+        matches.set(skillPath, { name: customRootMatch[1], path: skillPath });
       }
     }
 

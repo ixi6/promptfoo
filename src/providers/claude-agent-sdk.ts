@@ -52,17 +52,27 @@ export interface ToolCallEntry {
 function deriveSkillCalls(toolCalls: ToolCallEntry[]): SkillCallEntry[] {
   return toolCalls
     .filter((toolCall) => toolCall.name === 'Skill')
-    .map((toolCall) => ({
-      name:
+    .flatMap((toolCall) => {
+      const skillName =
         toolCall.input &&
         typeof toolCall.input === 'object' &&
         typeof (toolCall.input as Record<string, unknown>).skill === 'string'
-          ? ((toolCall.input as Record<string, unknown>).skill as string)
-          : 'unknown',
-      input: toolCall.input,
-      is_error: toolCall.is_error,
-      source: 'tool',
-    }));
+          ? ((toolCall.input as Record<string, unknown>).skill as string).trim()
+          : '';
+
+      if (!skillName) {
+        return [];
+      }
+
+      return [
+        {
+          name: skillName,
+          input: toolCall.input,
+          is_error: toolCall.is_error,
+          source: 'tool' as const,
+        },
+      ];
+    });
 }
 
 /**

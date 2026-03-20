@@ -66,6 +66,19 @@ describe('skill-used assertion', () => {
     expect(result.reason).toContain('Matched skill "project-*:*" 1 time(s)');
   });
 
+  it('trims object matcher name and pattern values', async () => {
+    const result = await runSkillAssertion({
+      type: 'skill-used',
+      value: {
+        pattern: ' project-*:* ',
+        min: 1,
+      },
+    });
+
+    expect(result.pass).toBe(true);
+    expect(result.reason).toContain('Matched skill "project-*:*" 1 time(s)');
+  });
+
   it('supports inverse assertions', async () => {
     const result = await runSkillAssertion({
       type: 'not-skill-used',
@@ -102,5 +115,25 @@ describe('skill-used assertion', () => {
         value: { min: 1 },
       }),
     ).rejects.toThrow('skill-used assertion object must include a name or pattern property');
+  });
+
+  it('fails gracefully when skillCalls is an empty array', async () => {
+    const result = await runAssertion({
+      assertion: {
+        type: 'skill-used',
+        value: 'token-skill',
+      },
+      test: testCase,
+      providerResponse: {
+        output: 'Done',
+        metadata: {
+          skillCalls: [],
+        },
+      },
+    });
+
+    expect(result.pass).toBe(false);
+    expect(result.reason).toContain('Missing required skill(s): token-skill');
+    expect(result.reason).toContain('Actual skills: (none)');
   });
 });

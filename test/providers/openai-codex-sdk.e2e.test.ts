@@ -21,7 +21,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.unmock('@openai/codex-sdk');
 vi.unmock('../../src/esm');
@@ -34,6 +34,8 @@ const openAiApiKey =
     ? process.env.OPENAI_API_KEY
     : undefined;
 const e2eApiKey = process.env.CODEX_E2E_API_KEY || process.env.CODEX_API_KEY || openAiApiKey;
+const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+const originalCodexApiKey = process.env.CODEX_API_KEY;
 
 // vitest.setup.ts installs a dummy OPENAI_API_KEY for unit tests. Ignore that value for E2E runs,
 // and only restore a real key when one is explicitly provided.
@@ -41,6 +43,20 @@ if (e2eApiKey) {
   process.env.OPENAI_API_KEY = e2eApiKey;
   process.env.CODEX_API_KEY = e2eApiKey;
 }
+
+afterAll(() => {
+  if (originalOpenAiApiKey === undefined) {
+    delete process.env.OPENAI_API_KEY;
+  } else {
+    process.env.OPENAI_API_KEY = originalOpenAiApiKey;
+  }
+
+  if (originalCodexApiKey === undefined) {
+    delete process.env.CODEX_API_KEY;
+  } else {
+    process.env.CODEX_API_KEY = originalCodexApiKey;
+  }
+});
 
 import { OpenAICodexSDKProvider } from '../../src/providers/openai/codex-sdk';
 

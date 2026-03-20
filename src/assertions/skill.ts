@@ -47,10 +47,12 @@ function resolveSkillMatchers(
 ):
   | { kind: 'list'; matchers: Array<{ name: string }> }
   | { kind: 'count'; matcher: SkillCountValue } {
+  const normalizeText = (text: unknown) => (typeof text === 'string' ? text.trim() : undefined);
+
   if (typeof value === 'string' && value.trim()) {
     return {
       kind: 'list',
-      matchers: [{ name: value.trim() }],
+      matchers: [{ name: normalizeText(value)! }],
     };
   }
 
@@ -67,7 +69,9 @@ function resolveSkillMatchers(
 
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const matcher = value as SkillCountValue;
-    if (!matcher.name && !matcher.pattern) {
+    const name = normalizeText(matcher.name);
+    const pattern = normalizeText(matcher.pattern);
+    if (!name && !pattern) {
       throw new Error('skill-used assertion object must include a name or pattern property');
     }
 
@@ -76,8 +80,8 @@ function resolveSkillMatchers(
       matcher: {
         max: typeof matcher.max === 'number' ? matcher.max : undefined,
         min: typeof matcher.min === 'number' ? matcher.min : undefined,
-        name: typeof matcher.name === 'string' ? matcher.name : undefined,
-        pattern: typeof matcher.pattern === 'string' ? matcher.pattern : undefined,
+        name,
+        pattern,
       },
     };
   }
