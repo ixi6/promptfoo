@@ -544,12 +544,10 @@ export class OpenAICodexSDKProvider implements ApiProvider {
       }
 
       const normalizedPath = token.replace(/\\/g, '/');
-      const repoSkillIndex = normalizedPath.indexOf('.agents/skills/');
-      if (repoSkillIndex !== -1) {
-        const repoSkillPath = normalizedPath.slice(repoSkillIndex);
-        const repoMatch = repoSkillPath.match(/^\.agents\/skills\/([^/\s]+)\/SKILL\.md$/);
-        if (repoMatch && this.isValidCodexSkillName(repoMatch[1])) {
-          matches.set(repoSkillPath, { name: repoMatch[1], path: repoSkillPath });
+      const repoMatch = normalizedPath.match(/^\.agents\/skills\/([^/\s]+)\/SKILL\.md$/);
+      if (repoMatch) {
+        if (this.isValidCodexSkillName(repoMatch[1])) {
+          matches.set(normalizedPath, { name: repoMatch[1], path: normalizedPath });
         }
         continue;
       }

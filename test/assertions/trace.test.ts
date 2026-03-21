@@ -1,5 +1,8 @@
+import * as path from 'path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runAssertion, runAssertions } from '../../src/assertions/index';
+import { assertionUsesTrace, runAssertion, runAssertions } from '../../src/assertions/index';
+import cliState from '../../src/cliState';
 import { getTraceStore } from '../../src/tracing/store';
 
 import type {
@@ -55,6 +58,7 @@ vi.mock('../../src/python/wrapper', () => ({
 }));
 
 describe('trace assertions', () => {
+  const originalBasePath = cliState.basePath;
   const mockTraceStore = {
     getTrace: vi.fn(),
   };
@@ -71,6 +75,7 @@ describe('trace assertions', () => {
   });
 
   afterEach(() => {
+    cliState.basePath = originalBasePath;
     vi.resetAllMocks();
   });
 
@@ -108,6 +113,15 @@ describe('trace assertions', () => {
   };
 
   describe('javascript assertions with trace', () => {
+    it('should treat ruby assertions as trace-aware', () => {
+      expect(
+        assertionUsesTrace({
+          type: 'ruby',
+          value: 'context.trace && context.trace.spans.length > 0',
+        }),
+      ).toBe(true);
+    });
+
     it('should pass trace data to javascript assertion', async () => {
       mockTraceStore.getTrace.mockResolvedValue(mockTraceData);
 
@@ -233,6 +247,26 @@ describe('trace assertions', () => {
 
       expect(result.pass).toBe(true);
       expect(mockTraceStore.getTrace).toHaveBeenCalledTimes(2);
+    });
+
+    it('should pass trace data to file:// scripts for non-trace assertion types', async () => {
+      mockTraceStore.getTrace.mockResolvedValue(mockTraceData);
+      cliState.basePath = path.resolve(__dirname, '../fixtures/file-script-assertions');
+
+      const result: GradingResult = await runAssertion({
+        assertion: {
+          type: 'equals',
+          value: 'file://rubric-generator.cjs:traceSpanName',
+        },
+        test: mockTest,
+        providerResponse: {
+          ...mockProviderResponse,
+          output: 'http.request',
+        },
+        traceId: 'test-trace-id',
+      });
+
+      expect(result.pass).toBe(true);
     });
 
     it('should calculate trace duration correctly', async () => {

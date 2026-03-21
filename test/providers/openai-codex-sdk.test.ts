@@ -346,6 +346,28 @@ describe('OpenAICodexSDKProvider', () => {
         expect(result.metadata).toBeUndefined();
       });
 
+      it('should ignore absolute .agents skill paths outside the current repo root', async () => {
+        mockRun.mockResolvedValue(
+          createMockResponse('OTHER-REPO', undefined, [
+            {
+              id: 'item-1',
+              type: 'command_execution',
+              command: 'cat /tmp/other/.agents/skills/token-skill/SKILL.md',
+              aggregated_output: 'CERULEAN-FALCON-SKILL',
+              exit_code: 0,
+              status: 'completed',
+            },
+          ]),
+        );
+
+        const provider = new OpenAICodexSDKProvider({
+          env: { OPENAI_API_KEY: 'test-api-key' },
+        });
+        const result = await provider.callApi('Read another repo skill');
+
+        expect(result.metadata).toBeUndefined();
+      });
+
       it('should not infer skillCalls from directory listings without a direct SKILL.md command read', async () => {
         mockRun.mockResolvedValue(
           createMockResponse('LISTED-FILES', undefined, [

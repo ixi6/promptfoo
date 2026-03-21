@@ -135,6 +135,7 @@ export const MODEL_GRADED_ASSERTION_TYPES = new Set<AssertionType>([
 const TRACE_AWARE_ASSERTION_TYPES = new Set<AssertionType>([
   'javascript',
   'python',
+  'ruby',
   'trace-error-spans',
   'trace-span-count',
   'trace-span-duration',
@@ -153,8 +154,22 @@ export function assertionUsesTrace(assertion: AssertionOrSet): boolean {
   return TRACE_AWARE_ASSERTION_TYPES.has(getAssertionBaseType(assertion));
 }
 
+function assertionMayNeedTraceContext(assertion: AssertionOrSet): boolean {
+  if (assertionUsesTrace(assertion)) {
+    return true;
+  }
+
+  if (assertion.type === 'assert-set') {
+    return assertion.assert.some(assertionMayNeedTraceContext);
+  }
+
+  return typeof assertion.value === 'string'
+    ? assertion.value.startsWith('file://') || isPackagePath(assertion.value)
+    : false;
+}
+
 export function hasTraceAwareAssertions(assertions?: AssertionOrSet[]): boolean {
-  return Boolean(assertions?.some(assertionUsesTrace));
+  return Boolean(assertions?.some(assertionMayNeedTraceContext));
 }
 
 async function loadTraceData(traceId: string): Promise<TraceData | null> {
@@ -393,7 +408,7 @@ export async function runAssertion({
   };
 
   // Add trace data if traceId is available
-  if (traceId && assertionUsesTrace(assertion)) {
+  if (traceId && assertionMayNeedTraceContext(assertion)) {
     try {
       const resolvedTraceData = traceData === undefined ? await loadTraceData(traceId) : traceData;
       if (resolvedTraceData) {
